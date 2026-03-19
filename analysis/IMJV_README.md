@@ -66,6 +66,7 @@ The following IMJV-to-EUTL links were verified as corporate name changes, merger
 | ORRION CHEMICALS REGEN | Nesar | Intermediate operator between MISA ECO and Nesar at the same site. | Same as above |
 | V.B.G. | VBG nv | Same company — "V.B.G." is the abbreviated form of "VBG nv". Same city (Wijnegem), same NACE (23.99). | User-confirmed |
 | ASFALT PRODUCTIE LIMBURG | APL nv | Same company — "APL" is the acronym for "Asfalt Productie Limburg". Same city (Heusden-Zolder), same NACE (23.99). | User-confirmed |
+| TEEPAK | ViskoTeepak | Same company — "Teepak" is embedded in "ViskoTeepak". Same city (Lommel). NACE differs (IMJV: 22.29 plastics vs EUTL: 20.16 primary plastics) due to classification differences. | User-confirmed, substring match |
 
 **EDF LUMINUS / S.P.E. entries**: S.P.E. was renamed EDF Luminus in 2011 (after EDF acquired Centrica's stake in SPE-Luminus in 2009), then renamed Luminus in 2019. EDFL refers to Electrabel-Luminus joint operations. These entries are matched by CBE establishment suffix:
 
@@ -86,6 +87,18 @@ The following flagged pairs were confirmed to be different firms:
 | ADPO GHENT | Rousselot | ADPO is a chemical tank storage terminal. Rousselot is a gelatin manufacturer. Different companies. |
 | HALTERMANN | 3M Belgium | Haltermann Carless operates blending sites in Ghent, not in Zwijndrecht where 3M is located. Different firms. |
 | COGEBI | Terca Beerse | Different cities (Beersel vs Beerse) and different NACE (23.99 vs 23.32). |
+
+## Systematic review of remaining unmatched firms
+
+After all hard-coded matches, 39 IMJV firms remain unmatched. A systematic pass checked each against all EUTL installations for substring matches, token overlap, and city+NACE co-occurrence. Conclusion: **none of the 39 are obvious matching failures.** They fall into three groups:
+
+**Waste incinerators (4 firms, ~391k t/yr total):** ISVAG Intercommunale (Antwerpen), Huisvuilverwerking Meetjesland (Eeklo), IVAGO (Gent), IMOG (Harelbeke). Municipal waste incinerators classified under NACE 38.21. Not in EU ETS.
+
+**Potentially ambiguous (2 firms, ~59k t/yr total):**
+- HALTERMANN (50k t/yr, Beveren-Zwijndrecht): specialty chemicals. No EUTL in same city. Haltermann Carless operates in Ghent per web search; may be a different site or below EU ETS threshold.
+- DU PONT DE NEMOURS - MECHELEN (8.6k t/yr): only EUTL in Mechelen is a food manufacturer (Wimble). DuPont may have closed this site or it operates below the 20 MW threshold.
+
+**Small non-ETS manufacturers (33 firms, ~72k t/yr total):** Plastics (Recticel ×4, Proseat ×2, Lemahieu, Seuropak, etc.), food (Cloetta, Vaco's Kitchen, La Lorraine), paper (Cartomills, Van Genechten Biermans), asphalt (Topasfalt, Colpin-De Meester), textiles (Vetex), water treatment (AWW), waste recycling (Sita ×2, Vanheede), and others. All below 10k t/yr, no plausible EUTL match.
 
 ## Output
 

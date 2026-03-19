@@ -80,7 +80,8 @@ hardcoded <- tribble(
   "NORTH EUROPEAN SULFERIC ACID REGENERATION", "Nesar",
   "ORRION CHEMICALS REGEN",                   "Nesar",
   "V.B.G.",                                   "VBG nv",
-  "ASFALT PRODUCTIE LIMBURG",                 "APL nv"
+  "ASFALT PRODUCTIE LIMBURG",                 "APL nv",
+  "TEEPAK",                                   "ViskoTeepak"
 )
 
 # EDF LUMINUS / S.P.E. entries: match by cbb establishment suffix to specific
