@@ -1,3 +1,21 @@
+## Project Description
+
+See `THIS_PROJECT.md` for a full description of the project, its research questions, and data sources.
+
+## Hardware Setup
+
+Three desktops are used in this project: local 1, local 2, and RMD (remote desktop).
+
+- **RMD**: Has the full NBB data (B2B, Customs, Annual Accounts, PRODCOM). Accessible only via VPN through local 2. No web browser, but connected to GitHub.
+- **Local 1**: Personal desktop with Claude Code and Cursor. Has a **downsampled** version of NBB data and the **full training sample** (copied from RMD via local 2 → cloud → local 1).
+- **Local 2**: Bridge machine with VPN access to RMD and regular web browser.
+
+When copying files from RMD to local 1: RMD → local 2 → cloud (Dropbox/Claude) → local 1.
+
+## Cross-Project Reference: `inferring_emissions/`
+
+When asked to collect information from `inferring_emissions/`, focus on the **paper submodule**, specifically `paper/winter26_version/`. This is the authoritative version; earlier versions (e.g., `dec25_version`) and scratch/dropped analyses may be outdated.
+
 ## Workflow Orchestration
 
 ### 1. Plan Node Default
