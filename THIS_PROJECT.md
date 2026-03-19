@@ -37,11 +37,17 @@ Firm-level emissions are constructed from four sources:
 
 **1. EU ETS.** The EU ETS compliance data provides verified annual emissions for each regulated installation in Belgium, covering more than 70% of emissions from stationary sources. Installations are linked to firms via the EUTL account data, which maps installation IDs to firm identifiers (BvD IDs and anonymized VAT codes). Firm-level EU ETS emissions are obtained by summing verified emissions across all installations owned by a given firm in a given year.
 
-**2. Climate TRACE.** [TODO: describe coverage, temporal span, overlap with EUTL, and firm linkage method.]
+**2. Climate TRACE — not used.** We investigated Climate TRACE (CT) as a potential source of facility-level emissions for non-ETS firms. CT covers 367 sources in Belgium (2021–2025) across 6 sectors. After matching CT sources to EUTL installations using geographic proximity, name similarity, and sector compatibility (see analysis/README.md for the full procedure), we found that CT does not add useful information for this project:
+
+- *High overlap with EUTL.* Of the facility-level CT sources (manufacturing, power, fossil fuel operations), most match to existing EUTL installations. Manufacturing subsectors like cement, glass, petrochemicals, and refineries have near-100% match rates.
+- *Non-overlapping sources lack facility-level variation.* The ~25 genuinely non-ETS CT sources (mostly food processing and textiles) are estimated using CT's "Data-informed Emissions Disaggregation" method, which divides country-level emissions from EDGAR/CEDS equally across all known facilities in a subsector. All 17 food-beverage-tobacco sources in Belgium receive identical emissions (60,454 t/yr each); all 5 textile sources receive 15,894 t/yr each. There is zero cross-facility variation.
+- *Noisy where it overlaps.* On the 226 matched installation-years where both CT and EUTL have positive emissions, CT systematically overestimates (median CT/EUTL ratio: 1.25) with moderate rank correlation (Spearman rho: 0.66).
+
+The imputation model from inferring_emissions is strictly preferable for non-ETS firms since it exploits firm-level observables (B2B transactions, revenue, sector) rather than dividing a country total by N.
 
 **3. IMJV.** [TODO: describe what this data provides.]
 
-**4. Imputed emissions.** For firms not covered by any of the three sources above, emissions are imputed using the prediction model developed in the inferring_emissions project.
+**4. Imputed emissions.** For firms not covered by the sources above, emissions are imputed using the prediction model developed in the inferring_emissions project.
 
 ### Data Sources
 
