@@ -81,11 +81,13 @@ A binary compatibility function C(i, j) = 1 if the CT subsector of source i is c
 | lime                         | 30 (lime)                                |
 | chemicals                    | 38, 39, 41, 42, 43                       |
 | other-metals                 | 26, 27, 28 (aluminium, non-ferrous)      |
-| electricity-generation       | 1 (combustion > 20 MW), 20 (combustion)  |
+| electricity-generation       | 1, 20, 21, 42, 43 (see note below)      |
 | food-beverage-tobacco        | 1 (combustion > 20 MW), 20 (combustion)  |
 | textiles-leather-apparel     | 1 (combustion > 20 MW), 20 (combustion)  |
 
 CT subsectors not in the table default to {1, 20} (generic combustion).
+
+**Note on electricity-generation compatibility.** CT classifies combined heat and power (CHP) units as "electricity-generation" even when they are physically located within, and operationally part of, a refinery or chemical complex. In the EUTL, these CHP units are often registered under the co-located facility's entry (e.g., a refinery with activity_id 21, or a chemicals plant with activity_id 42). This is particularly common in the Antwerp port industrial zone, where multiple CHP plants serve petrochemical and refining operations. To avoid false negatives in these dense industrial areas, the electricity-generation subsector is also compatible with refining (21), bulk chemicals (42), and hydrogen/synthesis gas (43) activity types.
 
 ## Step 4: Tier assignment
 

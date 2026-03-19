@@ -202,7 +202,10 @@ SECTOR_COMPAT <- list(
   "chemicals"                   = c(38, 39, 41, 42, 43),
   "other-metals"                = c(26, 27, 28),
   # Generic combustion sectors: compatible with any combustion installation
-  "electricity-generation"      = c(1, 20),
+  # electricity-generation also compatible with refining (21) and chemicals
+  # (42, 43) because CHP units in industrial complexes (e.g., Antwerp port)
+  # are often registered under the co-located facility's EUTL entry
+  "electricity-generation"      = c(1, 20, 21, 42, 43),
   "food-beverage-tobacco"       = c(1, 20),
   "textiles-leather-apparel"    = c(1, 20)
 )
