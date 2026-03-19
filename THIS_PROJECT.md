@@ -31,6 +31,18 @@ The comparison is **informative** in sectors where the dirty node is **outside**
 
 For each firm, compute a Herfindahl-type index over its suppliers weighted by supplier emission intensity. Do firms spread their sourcing across many low-emission suppliers, or concentrate purchases with a few high-emission ones? This has direct implications for transition risk — firms with concentrated dirty-supplier exposure are more vulnerable to carbon pricing pass-through. The B2B data provides the transaction-level resolution needed to compute this; aggregate IO tables cannot.
 
+### Emissions Data
+
+Firm-level emissions are constructed from four sources:
+
+**1. EU ETS.** The EU ETS compliance data provides verified annual emissions for each regulated installation in Belgium, covering more than 70% of emissions from stationary sources. Installations are linked to firms via the EUTL account data, which maps installation IDs to firm identifiers (BvD IDs and anonymized VAT codes). Firm-level EU ETS emissions are obtained by summing verified emissions across all installations owned by a given firm in a given year.
+
+**2. Climate TRACE.** [TODO: describe coverage, temporal span, overlap with EUTL, and firm linkage method.]
+
+**3. IMJV.** [TODO: describe what this data provides.]
+
+**4. Imputed emissions.** For firms not covered by any of the three sources above, emissions are imputed using the prediction model developed in the inferring_emissions project.
+
 ### Data Sources
 
 All data at the firm-level contain an unique firm-level identifier which is an anonymized VAT code. The code makes it possible to merge data sets.
