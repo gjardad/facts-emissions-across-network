@@ -1,0 +1,65 @@
+## Project Overview: The aim of the project is establish facts about the distribution of emissions across the producton network in Belgium between 2005-2022.
+
+### Research Questions:
+
+1. How dispersed are  scope 1 emissions across firms within sectors?
+2. How disperse are upstream network-adjusted emissions across firms within sectors? How does this dispersion compare with within-sector, across firms dispersion in scope 1 emissions?
+3. Does upstream network-adjusted emissions correlate with scope 1 emissions at the firm level across firms within sectors?
+4. To what extent do firm-level organizational boundaries — rather than underlying production technology — drive within-sector heterogeneity in scope 1 emissions? (Measured by within-sector rank correlation between scope 1 and network-adjusted emissions; low correlation indicates outsourcing decisions distort scope 1 rankings.)
+5. How concentrated is each firm's emission exposure across its suppliers?
+6. How many steps upstream does most embodied emission come from?
+
+### Data Sources
+
+All data at the firm-level contain an unique firm-level identifier which is an anonymized VAT code. The code makes it possible to merge data sets.
+
+NBB data sets (located in DATA_DIR/raw/NBB):
+
+	Customs data: firm-product-year-level data on imports and exports for the universe of goods imported into and exported from Belgium between 2000 and 2022. Goods are 	identified by CN 8-digit product codes and firms are identified by anonymized VAT codes.
+
+	B2B: buyer-supplier-year-level data on transactions between any two given private firms in Belgium between 2002 and 2022. It only contains the total nominal euros any   	two given firms transact, not which products were transacted. Buyers and suppliers are identified by their anonymized VAT code. The raw data is B2B\_ANO.dta
+
+	Annual accounts: a large set of firm-year-level characteristics. It includes, among others, revenue, wage bill, capital, and nace 5-digit sectors. The raw data is 	called Annual\_Accounts\_MASTER\_ANO.dta
+
+	PRODCOM: firm-product-year data on quantities and prices for each 8-digit code product produced by any given firm that is part of the survey sample. It only covers 	manufacturing goods (NACE codes between 07 and 33), for a sample of around 200k firms.
+
+	EUTL\_Belgium: for each installation covered by the EUTL, it provides unique firm identifiers (BvD id and the corresponding anonymized VAT).
+
+EUTL data sets (located in DATA_DIR/raw/EUTL/Oct_2024):
+
+	account: for each installation, it informs account unique id and corresponding BvD id.
+
+	compliance: for each installation-year regulated by the EUETS, it contains amount of emission permits allocated to the installation and verified emissions on that year. 	Installation are identified by unique installation\_id.
+
+	installation: for each installation regulated by the EUETS, it contains installation\_id, geographic location (lat/lon), NACE sector id (2 or 4 digit), among others.
+
+NIR data (located in DATA_DIR/raw/NIR):
+
+	BEL-CRTs: for each year between 1990 and 2023, it informs GHG emissions by CRF category. The data is split into multiple .xlsx, one for each year.
+
+	Annex XII: data on total GHG emissions and share of it regulated by the EUETS by CRF category. It consists of two .xslx files, one for 2022 (published in 2024) and one 	for 2023 (published in 2025).
+
+CRF-to-NACE crosswalk (located in DATA_DIR/raw/Correspondences_and_dictionaries): maps CRF categories to NACE Rev. 2 sectors. Combined with BEL-CRTs, this enables sector-level calibration targets for deployment to non-EUETS firms.
+
+Processed data (located in DATA_DIR/processed):
+
+	training_sample.RData: firm-year panel used for cross-validation. Contains EU ETS firms (with verified emissions) and non-ETS firms from NACE 17/18, 19, and 24 (with emissions set to 0). Available on local 1.
+
+**Downsampled data on local 1.** The following processed files on local 1 are **downsampled** versions of the full data (which is available only on RMD). The same applies to the corresponding raw .dta files in DATA_DIR/raw/NBB/.
+
+- `annual_accounts_selected_sample.RData` (and `_key_variables` and `_more_selected_sample` variants)
+- `b2b_selected_sample.RData`
+- `df_b2b.RData`
+- `df_trade.RData`
+- `df_national_accounts_with_5digits.RData`
+- `firms_in_selected_sample.RData`
+
+The full training sample (`training_sample.RData``) are NOT downsampled and are available in full on local 1.
+
+### Hardware setup:
+
+**I use three desktops in this project: local 1, local 2, and RMD (remote desktop).
+Access to the full NBB data is restricted to RMD through a VPN connection. RMD doesn't have access to the web browser, but it is connected to GitHub. I can only use the VPN connection through local 2. Local 2 has regular access to the web browser. Local 1 is my personal desktop and it is where I have Claude code and cursor downloaded.
+When copying files from RMD to local 1, I first need to copy them to local 2, then from local 2 to the cloud (Dropbox/Claude), then from the Claude to local 1.
+In local 1 I have available a downsampled version of the full NBB data sets as well as the full training sample. I built the training sample in RMD and copied it to local 2.
+Any script that only requires `training_sample.RData` (e.g., CV scripts, alternative specs, rho comparisons) can be run locally on local 1. RMD is only needed for scripts that access the raw NBB data (e.g., preprocessing, proxy construction).**
