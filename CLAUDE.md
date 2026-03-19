@@ -14,7 +14,7 @@ When copying files from RMD to local 1: RMD → local 2 → cloud (Dropbox/Claud
 
 ## Cross-Project Reference: `inferring_emissions/`
 
-When asked to collect information from `inferring_emissions/`, focus on the **paper submodule**, specifically `paper/winter26_version/`. This is the authoritative version; earlier versions (e.g., `dec25_version`) and scratch/dropped analyses may be outdated.
+**HARD CONSTRAINT:** When reading anything from `inferring_emissions/`, ONLY read files under `paper/winter26_version/`. Do NOT read code, analysis scripts, or earlier paper versions — they may be outdated. This applies to all subagents and exploration tasks. Pass this constraint explicitly when delegating.
 
 ## Workflow Orchestration
 
