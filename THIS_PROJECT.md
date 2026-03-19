@@ -9,6 +9,28 @@
 5. How concentrated is each firm's emission exposure across its suppliers?
 6. How many steps upstream does most embodied emission come from?
 
+#### Note on RQ 4
+
+Comparing within-sector rankings under scope 1 vs. network-adjusted emissions reveals the extent to which the **organizational boundary** (vertical integration vs. outsourcing) distorts emission rankings. If rank correlation is well below 1 in a sector, it means that make-or-buy decisions — not underlying production technology — are driving scope 1 heterogeneity.
+
+**When it matters and when it doesn't**
+
+The comparison is **uninformative** in sectors where the dirty node is internal to the sector regardless of firm structure. Example: cement vs. ready-mix concrete (both NACE 23). Cement producers operate kilns (high scope 1); concrete producers buy cement (low scope 1). But the concrete producers' network-adjusted emissions trace back to the same cement kilns — so both scope 1 and network-adjusted measures identify the cement producers as the high emitters. Network adjustment doesn't change the ranking of who matters.
+
+The comparison is **informative** in sectors where the dirty node is **outside** the sector — i.e., firms purchase carbon-intensive inputs from suppliers in other NACE sectors. In these sectors, scope 1 is uniformly low but firms vary in how much they buy from high-emission upstream suppliers. Network-adjusted emissions reveal within-sector heterogeneity that scope 1 cannot.
+
+**Practical examples**
+
+- **Plastics manufacturing (NACE 22):** Own processes (molding, extrusion) are low-temperature and low-emission. The key input is polymer resin from petrochemical producers (NACE 20), where steam cracking of naphtha is extremely energy-intensive. Within NACE 22, firms vary in how much virgin polymer they purchase from Antwerp crackers vs. using recycled plastics. Scope 1 looks similar; network-adjusted emissions diverge.
+
+- **Fabricated metals (NACE 25):** Firms buy steel and aluminum from primary metals producers (NACE 24) and perform cutting, welding, coating — modest energy use. Variation in how much primary metal a firm purchases from blast-furnace steelmakers shows up only in network-adjusted emissions.
+
+- **Paper products (NACE 17):** Non-integrated firms buy pulp from energy-intensive pulp mills. Their scope 1 is low but their upstream exposure is high. Integrated firms (with on-site pulping) have high scope 1 but similar network-adjusted emissions.
+
+#### Note on RQ 5
+
+For each firm, compute a Herfindahl-type index over its suppliers weighted by supplier emission intensity. Do firms spread their sourcing across many low-emission suppliers, or concentrate purchases with a few high-emission ones? This has direct implications for transition risk — firms with concentrated dirty-supplier exposure are more vulnerable to carbon pricing pass-through. The B2B data provides the transaction-level resolution needed to compute this; aggregate IO tables cannot.
+
 ### Data Sources
 
 All data at the firm-level contain an unique firm-level identifier which is an anonymized VAT code. The code makes it possible to merge data sets.
