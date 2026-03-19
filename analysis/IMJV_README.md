@@ -107,3 +107,27 @@ After all hard-coded matches, 39 IMJV firms remain unmatched. A systematic pass 
 - `imjv_firms` — unique IMJV firms with summary statistics
 
 Match types: `hardcoded`, `name_nace`, `name`, `name_city_nace`, `name_city`, `substr_city_nace`, `none`
+
+## Marginal value of IMJV beyond EU ETS
+
+Final matching result: 139 of 178 IMJV firms (78%) match to EUTL installations. The remaining 39 firms are genuinely non-ETS.
+
+The unmatched firms' emissions as a share of total Belgian EUTL verified emissions vary by year:
+
+| Period | IMJV unmatched / EUTL total | Reporting firms | Driver |
+|--------|----------------------------|-----------------|--------|
+| 2005–2012 | 0.2–0.3% | 12–16 | Many small firms, low individual emissions |
+| 2013–2016 | 0.5–0.9% | 11–12 | Waste incinerators growing throughput |
+| 2017–2018 | ~1.1% | 10–11 | Peak coverage period |
+| 2019–2022 | 0.7–0.9% | 8–10 | Fewer reporting firms |
+| 2023 | 1.2% | 10 | EUTL total declined while IMJV stable |
+
+At peak, IMJV adds ~1% of additional emissions beyond EU ETS. The increase over time is driven by waste incinerators increasing throughput — the number of reporting firms actually decreases but the surviving reporters are larger.
+
+The main sectors covered by IMJV but not EU ETS are:
+- Waste incineration (NACE 38.21): ~391k t/yr, 4 firms — the dominant contributor
+- Specialty chemicals (NACE 20.xx): ~75k t/yr, 5 firms
+- Plastics (NACE 22.xx): ~50k t/yr, 11 firms
+- Ceramics/asphalt (NACE 23.xx): ~29k t/yr, 7 firms
+
+IMJV's value relative to Climate TRACE: unlike CT (which assigns identical emissions to all firms in a subsector via top-down allocation), IMJV provides actual facility-level reported emissions with real cross-firm variation. This makes it strictly more informative for the ~39 firms it covers.
