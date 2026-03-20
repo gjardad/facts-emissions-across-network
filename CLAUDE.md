@@ -16,6 +16,8 @@ When copying files from RMD to local 1: RMD → local 2 → cloud (Dropbox/Claud
 
 **HARD CONSTRAINT:** When reading anything from `inferring_emissions/`, ONLY read files under `paper/winter26_version/`. Do NOT read code, analysis scripts, or earlier paper versions — they may be outdated. This applies to all subagents and exploration tasks. Pass this constraint explicitly when delegating.
 
+**EXCEPTION:** You MAY read `inferring_emissions/` code files (including `analysis/`, `preprocess/`, `utils/`) when the explicit purpose is to copy or directly adapt that code into `facts-emissions-across-network/`. This exception exists because this project is meant to be standalone — all necessary code from `inferring_emissions/` should be copied here so that someone can reproduce results without knowing `inferring_emissions/` exists.
+
 ## Workflow Orchestration
 
 ### 1. Plan Node Default
