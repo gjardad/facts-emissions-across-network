@@ -1,0 +1,17 @@
+# ---- Cached artifacts ----
+cache/
+**/cache/*
+
+**/nul
+
+# ---- R serialized objects ----
+*.rds
+
+# ---- PDFs (copyrighted papers) ----
+articles/*.pdf
+articles/
+
+# ---- Node.js ----
+node_modules/
+package.json
+package-lock.json
