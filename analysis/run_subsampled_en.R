@@ -398,13 +398,15 @@ cat("  Mean proxy SD:", round(mean(proxy_avg$proxy_sd, na.rm = TRUE), 4), "\n\n"
 # =============================================================================
 # STEP 8: Save
 # =============================================================================
-OUT_PATH <- file.path(PROC_DATA, "deployment_proxy_avg.RData")
+# proxy_avg: small — copy to local 1 for diagnostics and downstream analysis
+# proxy_list: heavy (B draws) — keep on RMD for uncertainty propagation (Stage B)
 
-save(proxy_avg, proxy_list, file = OUT_PATH)
+save(proxy_avg,  file = file.path(PROC_DATA, "deployment_proxy_avg.RData"))
+save(proxy_list, file = file.path(PROC_DATA, "deployment_proxy_list.RData"))
 
 cat("══════════════════════════════════════════════\n")
-cat("Saved to:", OUT_PATH, "\n")
-cat("  proxy_avg :", nrow(proxy_avg), "rows x", ncol(proxy_avg), "cols\n")
-cat("  proxy_list:", length(proxy_list), "draws\n")
+cat("Saved:\n")
+cat("  deployment_proxy_avg.RData  —", nrow(proxy_avg), "rows (copy to local 1)\n")
+cat("  deployment_proxy_list.RData —", length(proxy_list), "draws (keep on RMD)\n")
 cat("  B =", B_DRAWS, "| alpha =", ALPHA, "| seed =", BASE_SEED, "\n")
 cat("══════════════════════════════════════════════\n")
