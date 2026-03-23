@@ -305,7 +305,7 @@ for (t in YEARS) {
   # ── ETS emission intensities (fixed across draws) ─────────────────────────
   eps_ets <- rep(0, N)
   ets_idx <- match(eutl_t$vat, all_vats)
-  ok_ets  <- !is.na(ets_idx) & eutl_t$emissions > 0
+  ok_ets  <- !is.na(ets_idx) & !is.na(eutl_t$emissions) & eutl_t$emissions > 0
   eps_ets[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / rev_vec[ets_idx[ok_ets]]
   ets_vats_t <- eutl_t$vat[ok_ets & !is.na(ets_idx)]
 
