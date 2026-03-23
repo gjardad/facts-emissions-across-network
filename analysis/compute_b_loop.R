@@ -52,10 +52,11 @@ source(file.path(REPO_DIR, "paths.R"))
 
 library(dplyr)
 library(Matrix)
+library(parallel)
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 YEARS         <- 2005:2022
-NEUMANN_MAXIT <- 30L    # max iterations per (year, draw)
+NEUMANN_MAXIT <- 50L    # max terms in Neumann series per (year, draw)
 NEUMANN_TOL   <- 1e-8   # convergence: max(|term_k|) / (max(|m|) + eps) < tol
 MIN_N_STATS   <- 3L     # min firms per sector-year to compute a statistic
 
@@ -72,8 +73,10 @@ cat("═════════════════════════
 cat("── Loading data ─────────────────────────────────────────────\n")
 
 load(file.path(PROC_DATA, "deployment_proxy_list.RData"))
-B <- length(proxy_list)
+B       <- length(proxy_list)
+N_CORES <- min(B, parallel::detectCores())
 cat("  proxy_list: B =", B, "draws\n")
+cat("  Cores for draw parallelism:", N_CORES, "\n")
 
 load(file.path(PROC_DATA, "b2b_selected_sample.RData"))
 b2b <- df_b2b_selected_sample %>% filter(year %in% YEARS)
@@ -294,13 +297,11 @@ for (t in YEARS) {
   eps_ets[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / rev_vec[ets_idx[ok_ets]]
   ets_vats_t <- eutl_t$vat[ok_ets & !is.na(ets_idx)]
 
-  # ── Draw loop ─────────────────────────────────────────────────────────────
-  k_vec   <- integer(B)
-  rel_vec <- numeric(B)
+  # ── Draw loop (parallelised over B draws via mclapply) ────────────────────
+  # A is shared across all draws (read-only fork copy-on-write).
+  # Each draw gets its own ε vector and Neumann computation.
+  draw_results <- mclapply(seq_len(B), function(b) {
 
-  for (b in seq_len(B)) {
-
-    # NIR calibration for draw b
     proxy_b <- proxy_t[[b]]   # named vector vat → proxy_avg
 
     deploy_b <- data.frame(
@@ -330,16 +331,13 @@ for (t in YEARS) {
       deploy_b$emissions_b[ok_imp] / rev_vec[imp_idx[ok_imp]]
 
     # Neumann series: m ≈ (I - A)^{-1} ε
-    ns         <- neumann_series(A, eps_b)
-    k_vec[b]   <- ns$k
-    rel_vec[b] <- ns$rel_err
+    ns <- neumann_series(A, eps_b)
 
-    # upstream_i  = revenue_i * (m_i - eps_i), floored at 0
-    # scope1_i    = revenue_i * eps_i
+    # upstream_i = revenue_i * (m_i - eps_i), floored at 0
+    # scope1_i   = revenue_i * eps_i
     upstream_b <- pmax(rev_vec * (ns$m - eps_b), 0)
     scope1_b   <- rev_vec * eps_b
 
-    # Firm-level panel for statistics
     firms_bt <- data.frame(
       vat      = all_vats,
       scope1   = scope1_b,
@@ -351,10 +349,24 @@ for (t in YEARS) {
       mutate(euets = as.integer(vat %in% ets_vats_t))
 
     st <- compute_stats_bt(firms_bt)
-    stats2d_all[[length(stats2d_all) + 1L]] <-
-      st$stats2d %>% mutate(year = t, draw = b)
-    stats5d_all[[length(stats5d_all) + 1L]] <-
-      st$stats5d %>% mutate(year = t, draw = b)
+
+    list(
+      stats2d = st$stats2d %>% mutate(year = t, draw = b),
+      stats5d = st$stats5d %>% mutate(year = t, draw = b),
+      k       = ns$k,
+      rel_err = ns$rel_err
+    )
+  }, mc.cores = N_CORES)
+
+  # Collect results from all draws
+  k_vec   <- integer(B)
+  rel_vec <- numeric(B)
+  for (b in seq_len(B)) {
+    res <- draw_results[[b]]
+    stats2d_all[[length(stats2d_all) + 1L]] <- res$stats2d
+    stats5d_all[[length(stats5d_all) + 1L]] <- res$stats5d
+    k_vec[b]   <- res$k
+    rel_vec[b] <- res$rel_err
   }
 
   conv_rows[[length(conv_rows) + 1L]] <- data.frame(
