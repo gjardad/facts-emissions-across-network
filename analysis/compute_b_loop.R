@@ -24,8 +24,8 @@
 #   {PROC_DATA}/firm_year_belgian_euets.RData
 #   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
 #   {PROC_DATA}/deployment_panel.RData              (vat, year, nace5d, revenue)
-#   {PROC_DATA}/belcrt_sector_denominators.tsv      (NIR totals by CRF × year)
-#   {PROC_DATA}/crf_to_nace_map.RData               (CRF → NACE 2-digit map)
+#   {PROC_DATA}/nir_calibration_targets.RData       (E_NIR_kt by CRF group × year)
+#   {REPO_DIR}/preprocess/crosswalks/nace_crf_crosswalk.csv  (NACE 2d → crf_group)
 #
 # OUTPUT  — copy b_loop_statistics.RData to local 1
 #   {PROC_DATA}/b_loop_statistics.RData
@@ -97,10 +97,18 @@ rm(df_annual_accounts_selected_sample_key_variables)
 cat("  Accounts firm-years:", nrow(accounts), "\n")
 
 load(file.path(PROC_DATA, "deployment_panel.RData"))
+
+nace_crf <- read.csv(
+  file.path(REPO_DIR, "preprocess", "crosswalks", "nace_crf_crosswalk.csv"),
+  stringsAsFactors = FALSE
+) %>%
+  select(nace2d, crf_group)
+
 deploy_nace <- deployment_panel %>%
   mutate(nace2d = substr(nace5d, 1, 2)) %>%
   select(vat, nace2d, nace5d) %>%
-  distinct(vat, .keep_all = TRUE)
+  distinct(vat, .keep_all = TRUE) %>%
+  left_join(nace_crf, by = "nace2d")
 rm(deployment_panel)
 
 cat("\n")
@@ -111,37 +119,28 @@ cat("\n")
 # =============================================================================
 cat("── NIR calibration targets ──────────────────────────────────\n")
 
-load(file.path(PROC_DATA, "crf_to_nace_map.RData"))
+load(file.path(PROC_DATA, "nir_calibration_targets.RData"))  # nir_targets: (crf_group, year, E_NIR_kt)
 
-nir_raw <- read.table(
-  file.path(PROC_DATA, "belcrt_sector_denominators.tsv"),
-  sep = "\t", header = TRUE, stringsAsFactors = FALSE
-)
-
-# Restrict to fossil fuel combustion (CRF 1A*), map to NACE 2-digit, sum
-E_NIR <- nir_raw %>%
-  filter(grepl("^1A", crf_code)) %>%
-  left_join(crf_to_nace_map, by = "crf_code") %>%
-  filter(!is.na(nace2d), year %in% YEARS) %>%
-  group_by(nace2d, year) %>%
-  summarise(E_NIR = sum(emissions_kt * 1000, na.rm = TRUE),  # kt → t CO2e
-            .groups = "drop")
-
-E_ETS <- eutl %>%
+# E_ETS aggregated to CRF group × year (using the same NACE → crf_group crosswalk)
+E_ETS_group <- eutl %>%
   left_join(accounts %>% distinct(vat, year, nace2d), by = c("vat", "year")) %>%
-  group_by(nace2d, year) %>%
+  left_join(nace_crf, by = "nace2d") %>%
+  filter(!is.na(crf_group), year %in% YEARS) %>%
+  group_by(crf_group, year) %>%
   summarise(E_ETS = sum(emissions, na.rm = TRUE), .groups = "drop")
 
-E_deploy_panel <- E_NIR %>%
-  left_join(E_ETS, by = c("nace2d", "year")) %>%
+E_deploy_panel <- nir_targets %>%
+  filter(year %in% YEARS) %>%
+  mutate(E_NIR = E_NIR_kt * 1000) %>%         # kt → t CO2
+  left_join(E_ETS_group, by = c("crf_group", "year")) %>%
   mutate(E_ETS    = coalesce(E_ETS, 0),
          E_deploy = pmax(E_NIR - E_ETS, 0))
 
 n_floored <- sum(E_deploy_panel$E_NIR < E_deploy_panel$E_ETS, na.rm = TRUE)
 if (n_floored > 0)
-  cat("  WARNING:", n_floored, "sector-years where E_ETS > E_NIR → floored to 0\n")
+  cat("  WARNING:", n_floored, "group-years where E_ETS > E_NIR → floored to 0\n")
 
-cat("  E_deploy built:", nrow(E_deploy_panel), "sector-years\n\n")
+cat("  E_deploy built:", nrow(E_deploy_panel), "group-years\n\n")
 
 
 # =============================================================================
@@ -249,7 +248,7 @@ for (t in YEARS) {
   eutl_t     <- eutl[eutl$year == t, ]
   accounts_t <- accounts[accounts$year == t, ]
   E_dep_t    <- E_deploy_panel[E_deploy_panel$year == t,
-                                c("nace2d", "E_deploy")]
+                                c("crf_group", "E_deploy")]
 
   # Proxy slices for year t: list of B vectors (vat → proxy value)
   proxy_t <- lapply(proxy_list, function(px) {
@@ -311,10 +310,10 @@ for (t in YEARS) {
     ) %>%
       filter(proxy_avg > 0) %>%
       left_join(deploy_nace, by = "vat") %>%
-      filter(!is.na(nace2d)) %>%
-      left_join(E_dep_t, by = "nace2d") %>%
+      filter(!is.na(crf_group)) %>%
+      left_join(E_dep_t, by = "crf_group") %>%
       mutate(E_deploy = coalesce(E_deploy, 0)) %>%
-      group_by(nace2d) %>%
+      group_by(crf_group) %>%
       mutate(
         sinh_sum    = sum(sinh(proxy_avg)),
         w           = if_else(sinh_sum > 0, sinh(proxy_avg) / sinh_sum, 0),

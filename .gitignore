@@ -7,6 +7,9 @@ cache/
 # ---- R serialized objects ----
 *.rds
 
+# ---- Generated crosswalk CSVs (built by preprocess/build_nace_crf_crosswalks.R) ----
+preprocess/crosswalks/*.csv
+
 # ---- PDFs (copyrighted papers) ----
 articles/*.pdf
 articles/
