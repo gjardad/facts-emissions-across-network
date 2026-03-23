@@ -59,6 +59,7 @@ YEARS         <- 2005:2022
 NEUMANN_MAXIT <- 50L    # max terms in Neumann series per (year, draw)
 NEUMANN_TOL   <- 1e-8   # convergence: max(|term_k|) / (max(|m|) + eps) < tol
 MIN_N_STATS   <- 3L     # min firms per sector-year to compute a statistic
+A_ROW_CAP     <- 0.999  # cap A row sums at this value to guarantee convergence
 
 cat("═══════════════════════════════════════════════════════════════\n")
 cat("  B-LOOP: NIR + LEONTIEF/NEUMANN + RQ1-RQ5\n")
@@ -74,7 +75,7 @@ cat("── Loading data ──────────────────�
 
 load(file.path(PROC_DATA, "deployment_proxy_list.RData"))
 B       <- length(proxy_list)
-N_CORES <- min(B, parallel::detectCores())
+N_CORES <- if (.Platform$OS.type == "windows") 1L else min(B, parallel::detectCores())
 cat("  proxy_list: B =", B, "draws\n")
 cat("  Cores for draw parallelism:", N_CORES, "\n")
 
@@ -103,7 +104,8 @@ load(file.path(PROC_DATA, "deployment_panel.RData"))
 
 nace_crf <- read.csv(
   file.path(REPO_DIR, "preprocess", "crosswalks", "nace_crf_crosswalk.csv"),
-  stringsAsFactors = FALSE
+  stringsAsFactors = FALSE,
+  colClasses = c(nace2d = "character")
 ) %>%
   select(nace2d, crf_group)
 
@@ -255,8 +257,8 @@ for (t in YEARS) {
 
   # Proxy slices for year t: list of B vectors (vat → proxy value)
   proxy_t <- lapply(proxy_list, function(px) {
-    sub <- px[px$year == t, c("vat", "proxy_avg")]
-    setNames(sub$proxy_avg, sub$vat)
+    sub <- px[px$year == t, c("vat", "proxy")]
+    setNames(sub$proxy, sub$vat)
   })
 
   # ── Build A matrix for year t (shared across all B draws) ─────────────────
@@ -287,8 +289,16 @@ for (t in YEARS) {
   )
 
   max_rowsum <- max(rowSums(A))
-  if (max_rowsum >= 1)
-    cat(sprintf("\n  WARNING year %d: max row sum of A = %.3f >= 1\n", t, max_rowsum))
+  if (max_rowsum >= 1) {
+    cat(sprintf("\n  WARNING year %d: max row sum of A = %.3f >= 1 — capping rows to %.3f\n",
+                t, max_rowsum, A_ROW_CAP))
+    # Scale down rows exceeding the cap: multiply each over-cap row by (cap / rowsum)
+    row_sums          <- rowSums(A)
+    scale_vec         <- rep(1, nrow(A))
+    over              <- row_sums > A_ROW_CAP
+    scale_vec[over]   <- A_ROW_CAP / row_sums[over]
+    A                 <- Diagonal(x = scale_vec) %*% A
+  }
 
   # ── ETS emission intensities (fixed across draws) ─────────────────────────
   eps_ets <- rep(0, N)
