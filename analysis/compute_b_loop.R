@@ -23,8 +23,9 @@
 #   {PROC_DATA}/b2b_selected_sample.RData
 #   {PROC_DATA}/firm_year_belgian_euets.RData
 #   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
-#   {PROC_DATA}/deployment_panel.RData              (vat, year, nace5d, revenue)
+#   {PROC_DATA}/deployment_panel.RData              (vat, year, nace5d)
 #   {PROC_DATA}/nir_calibration_targets.RData       (E_NIR_kt by CRF group × year)
+#   {PROC_DATA}/firm_year_total_imports.RData        (vat, year, total_imports)
 #   {REPO_DIR}/preprocess/crosswalks/nace_crf_crosswalk.csv  (NACE 2d → crf_group)
 #
 # OUTPUT  — copy b_loop_statistics.RData to local 1
@@ -59,7 +60,32 @@ YEARS         <- 2005:2022
 NEUMANN_MAXIT <- 50L    # max terms in Neumann series per (year, draw)
 NEUMANN_TOL   <- 1e-8   # convergence: max(|term_k|) / (max(|m|) + eps) < tol
 MIN_N_STATS   <- 3L     # min firms per sector-year to compute a statistic
-A_ROW_CAP     <- 0.999  # cap A row sums at this value to guarantee convergence
+
+# EU ETS annual average carbon price (EUR / tonne CO2), 2005–2022.
+# Source: EEX / ICE EUA spot price annual averages (public market data).
+# Used to add permit costs to cost_vec for ETS-regulated firms:
+#   permit_cost_i = emissions_i * carbon_price_t
+# Phase 1 (2005–2007) allowances expired worthless → 2007 price collapses to ~0.
+CARBON_PRICE <- c(
+  "2005" = 18.0,
+  "2006" = 17.1,
+  "2007" =  0.7,
+  "2008" = 22.0,
+  "2009" = 13.4,
+  "2010" = 14.8,
+  "2011" = 13.2,
+  "2012" =  7.4,
+  "2013" =  4.5,
+  "2014" =  5.8,
+  "2015" =  7.7,
+  "2016" =  5.3,
+  "2017" =  5.9,
+  "2018" = 15.8,
+  "2019" = 24.7,
+  "2020" = 24.7,
+  "2021" = 53.0,
+  "2022" = 81.0
+)
 N_CORES_SET   <- 40L    # cores for draw parallelism; set explicitly (detectCores
                         # may undercount in restricted RMD environments)
 
@@ -96,11 +122,18 @@ cat("  EUTL firm-years:", nrow(eutl), "\n")
 load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData"))
 accounts <- df_annual_accounts_selected_sample_key_variables %>%
   filter(year %in% YEARS) %>%
-  select(vat, year, revenue, nace5d) %>%
-  mutate(nace2d  = substr(nace5d, 1, 2),
-         revenue = pmax(revenue, 1e-6))
+  select(vat, year, nace5d, wage_bill) %>%
+  mutate(nace2d   = substr(nace5d, 1, 2),
+         wage_bill = pmax(coalesce(wage_bill, 0), 0))
 rm(df_annual_accounts_selected_sample_key_variables)
 cat("  Accounts firm-years:", nrow(accounts), "\n")
+
+load(file.path(PROC_DATA, "firm_year_total_imports.RData"))
+imports <- firm_year_total_imports %>%
+  filter(year %in% YEARS) %>%
+  select(vat, year, total_imports)
+rm(firm_year_total_imports)
+cat("  Import firm-years:", nrow(imports), "\n")
 
 load(file.path(PROC_DATA, "deployment_panel.RData"))
 
@@ -254,6 +287,7 @@ for (t in YEARS) {
   b2b_t      <- b2b[b2b$year == t, ]
   eutl_t     <- eutl[eutl$year == t, ]
   accounts_t <- accounts[accounts$year == t, ]
+  imports_t  <- imports[imports$year == t, ]
   E_dep_t    <- E_deploy_panel[E_deploy_panel$year == t,
                                 c("crf_group", "E_deploy")]
 
@@ -268,45 +302,67 @@ for (t in YEARS) {
   N        <- length(all_vats)
   vat_idx  <- setNames(seq_len(N), all_vats)
 
-  rev_vec <- rep(1e-6, N)
-  acc_idx <- match(accounts_t$vat, all_vats)
-  ok      <- !is.na(acc_idx)
-  rev_vec[acc_idx[ok]] <- pmax(accounts_t$revenue[ok], 1e-6)
-
-  # Aggregate B2B to (seller, buyer) and compute technical coefficients
+  # Aggregate B2B to (seller, buyer) — needed for both cost_vec and A
   b2b_agg <- b2b_t %>%
     group_by(vat_i_ano, vat_j_ano) %>%
     summarise(sales = sum(corr_sales_ij, na.rm = TRUE), .groups = "drop") %>%
     filter(sales > 0)
 
+  # ── Cost denominator: wage_bill + domestic B2B inputs + total imports ──────
+  # Under zero-profit pricing this equals revenue. Using it guarantees A row
+  # sums < 1 by construction: domestic B2B is a strict subset of total cost.
+  cost_vec <- rep(1e-6, N)
+
+  # Domestic B2B input cost (row sums of purchase matrix; vat_j_ano = buyer)
+  b2b_rowsums <- b2b_agg %>%
+    group_by(vat_j_ano) %>%
+    summarise(domestic_inputs = sum(sales), .groups = "drop")
+  buyer_idx <- vat_idx[b2b_rowsums$vat_j_ano]
+  ok_buyer  <- !is.na(buyer_idx)
+  cost_vec[buyer_idx[ok_buyer]] <- cost_vec[buyer_idx[ok_buyer]] +
+    b2b_rowsums$domestic_inputs[ok_buyer]
+
+  # Wage bill
+  acc_idx_c <- match(accounts_t$vat, all_vats)
+  ok_acc    <- !is.na(acc_idx_c) & accounts_t$wage_bill > 0
+  cost_vec[acc_idx_c[ok_acc]] <- cost_vec[acc_idx_c[ok_acc]] +
+    accounts_t$wage_bill[ok_acc]
+
+  # Total imports
+  imp_cost_idx <- match(imports_t$vat, all_vats)
+  ok_imp_cost  <- !is.na(imp_cost_idx) & !is.na(imports_t$total_imports) &
+                  imports_t$total_imports > 0
+  cost_vec[imp_cost_idx[ok_imp_cost]] <- cost_vec[imp_cost_idx[ok_imp_cost]] +
+    imports_t$total_imports[ok_imp_cost]
+
+  # ETS permit costs: emissions_i × carbon_price_t (regulated firms only)
+  ets_cost_idx <- match(eutl_t$vat, all_vats)
+  ok_ets_c     <- !is.na(ets_cost_idx) & !is.na(eutl_t$emissions) &
+                  eutl_t$emissions > 0
+  cost_vec[ets_cost_idx[ok_ets_c]] <- cost_vec[ets_cost_idx[ok_ets_c]] +
+    eutl_t$emissions[ok_ets_c] * CARBON_PRICE[as.character(t)]
+
   row_i  <- vat_idx[b2b_agg$vat_j_ano]   # buyer  → row
   col_j  <- vat_idx[b2b_agg$vat_i_ano]   # seller → column
   ok_ij  <- !is.na(row_i) & !is.na(col_j)
 
+  # A_{ij} = purchases_{ij} / cost_i; row sums < 1 guaranteed by construction
   A <- sparseMatrix(
     i    = row_i[ok_ij],
     j    = col_j[ok_ij],
-    x    = b2b_agg$sales[ok_ij] / rev_vec[row_i[ok_ij]],
+    x    = b2b_agg$sales[ok_ij] / cost_vec[row_i[ok_ij]],
     dims = c(N, N)
   )
 
   max_rowsum <- max(rowSums(A))
-  if (max_rowsum >= 1) {
-    cat(sprintf("\n  WARNING year %d: max row sum of A = %.3f >= 1 — capping rows to %.3f\n",
-                t, max_rowsum, A_ROW_CAP))
-    # Scale down rows exceeding the cap: multiply each over-cap row by (cap / rowsum)
-    row_sums          <- rowSums(A)
-    scale_vec         <- rep(1, nrow(A))
-    over              <- row_sums > A_ROW_CAP
-    scale_vec[over]   <- A_ROW_CAP / row_sums[over]
-    A                 <- Diagonal(x = scale_vec) %*% A
-  }
+  if (max_rowsum >= 1)
+    cat(sprintf("\n  WARNING year %d: max row sum of A = %.4f >= 1\n", t, max_rowsum))
 
-  # ── ETS emission intensities (fixed across draws) ─────────────────────────
+  # ── ETS emission intensities: emissions per unit cost (fixed across draws) ──
   eps_ets <- rep(0, N)
   ets_idx <- match(eutl_t$vat, all_vats)
   ok_ets  <- !is.na(ets_idx) & !is.na(eutl_t$emissions) & eutl_t$emissions > 0
-  eps_ets[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / rev_vec[ets_idx[ok_ets]]
+  eps_ets[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / cost_vec[ets_idx[ok_ets]]
   ets_vats_t <- eutl_t$vat[ok_ets & !is.na(ets_idx)]
 
   # ── Draw loop (parallelised over B draws via mclapply) ────────────────────
@@ -340,15 +396,15 @@ for (t in YEARS) {
     imp_idx <- match(deploy_b$vat, all_vats)
     ok_imp  <- !is.na(imp_idx)
     eps_b[imp_idx[ok_imp]] <- eps_b[imp_idx[ok_imp]] +
-      deploy_b$emissions_b[ok_imp] / rev_vec[imp_idx[ok_imp]]
+      deploy_b$emissions_b[ok_imp] / cost_vec[imp_idx[ok_imp]]
 
     # Neumann series: m ≈ (I - A)^{-1} ε
     ns <- neumann_series(A, eps_b)
 
-    # upstream_i = revenue_i * (m_i - eps_i), floored at 0
-    # scope1_i   = revenue_i * eps_i
-    upstream_b <- pmax(rev_vec * (ns$m - eps_b), 0)
-    scope1_b   <- rev_vec * eps_b
+    # upstream_i = cost_i * (m_i - eps_i), floored at 0
+    # scope1_i   = cost_i * eps_i = emissions_i (by construction)
+    upstream_b <- pmax(cost_vec * (ns$m - eps_b), 0)
+    scope1_b   <- cost_vec * eps_b
 
     firms_bt <- data.frame(
       vat      = all_vats,
