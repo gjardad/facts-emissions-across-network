@@ -60,6 +60,8 @@ NEUMANN_MAXIT <- 50L    # max terms in Neumann series per (year, draw)
 NEUMANN_TOL   <- 1e-8   # convergence: max(|term_k|) / (max(|m|) + eps) < tol
 MIN_N_STATS   <- 3L     # min firms per sector-year to compute a statistic
 A_ROW_CAP     <- 0.999  # cap A row sums at this value to guarantee convergence
+N_CORES_SET   <- 40L    # cores for draw parallelism; set explicitly (detectCores
+                        # may undercount in restricted RMD environments)
 
 cat("═══════════════════════════════════════════════════════════════\n")
 cat("  B-LOOP: NIR + LEONTIEF/NEUMANN + RQ1-RQ5\n")
@@ -75,7 +77,7 @@ cat("── Loading data ──────────────────�
 
 load(file.path(PROC_DATA, "deployment_proxy_list.RData"))
 B       <- length(proxy_list)
-N_CORES <- if (.Platform$OS.type == "windows") 1L else min(B, parallel::detectCores())
+N_CORES <- if (.Platform$OS.type == "windows") 1L else min(B, N_CORES_SET)
 cat("  proxy_list: B =", B, "draws\n")
 cat("  Cores for draw parallelism:", N_CORES, "\n")
 
