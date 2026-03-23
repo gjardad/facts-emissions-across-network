@@ -1,0 +1,83 @@
+nace2d,nace_label,crf_group
+01,Crop and animal production,agriculture
+02,Forestry and logging,agriculture
+03,Fishing and aquaculture,agriculture
+05,Mining of coal and lignite,mfg_other
+06,Extraction of crude petroleum and natural gas,mfg_other
+07,Mining of metal ores,mfg_other
+08,Other mining and quarrying,mfg_other
+09,Mining support service activities,mfg_other
+10,Manufacture of food products,food
+11,Manufacture of beverages,food
+12,Manufacture of tobacco products,food
+13,Manufacture of textiles,mfg_other
+14,Manufacture of wearing apparel,mfg_other
+15,Manufacture of leather and related products,mfg_other
+16,Manufacture of wood and wood products,mfg_other
+17,Manufacture of paper and paper products,paper
+18,Printing and reproduction of recorded media,paper
+19,Manufacture of coke and refined petroleum products,refining
+20,Manufacture of chemicals and chemical products,chemicals
+21,Manufacture of basic pharmaceutical products,chemicals
+22,Manufacture of rubber and plastic products,mfg_other
+23,Manufacture of non-metallic mineral products,minerals
+24,Manufacture of basic metals,metals
+25,Manufacture of fabricated metal products,metals
+26,Manufacture of computer electronic and optical products,mfg_other
+27,Manufacture of electrical equipment,mfg_other
+28,Manufacture of machinery and equipment n.e.c.,mfg_other
+29,Manufacture of motor vehicles trailers and semi-trailers,mfg_other
+30,Manufacture of other transport equipment,mfg_other
+31,Manufacture of furniture,mfg_other
+32,Other manufacturing,mfg_other
+33,Repair and installation of machinery and equipment,mfg_other
+35,Electricity gas steam and air conditioning supply,energy
+36,Water collection treatment and supply,commercial
+37,Sewage,commercial
+38,Waste collection treatment disposal and recovery,commercial
+39,Remediation activities and other waste management,commercial
+41,Construction of buildings,mfg_other
+42,Civil engineering,mfg_other
+43,Specialised construction activities,mfg_other
+45,Wholesale and retail trade and repair of motor vehicles,commercial
+46,Wholesale trade except of motor vehicles,commercial
+47,Retail trade except of motor vehicles,commercial
+52,Warehousing and support activities for transportation,commercial
+53,Postal and courier activities,commercial
+55,Accommodation,commercial
+56,Food and beverage service activities,commercial
+58,Publishing activities,commercial
+59,Motion picture video and television programme production,commercial
+60,Programming and broadcasting activities,commercial
+61,Telecommunications,commercial
+62,Computer programming consultancy and related activities,commercial
+63,Information service activities,commercial
+64,Financial service activities except insurance and pension funding,commercial
+65,Insurance reinsurance and pension funding,commercial
+66,Activities auxiliary to financial services and insurance,commercial
+68,Real estate activities,commercial
+69,Legal and accounting activities,commercial
+70,Activities of head offices and management consultancy,commercial
+71,Architectural and engineering activities and technical testing,commercial
+72,Scientific research and development,commercial
+73,Advertising and market research,commercial
+74,Other professional scientific and technical activities,commercial
+75,Veterinary activities,commercial
+77,Rental and leasing activities,commercial
+78,Employment activities,commercial
+79,Travel agency tour operator and other reservation activities,commercial
+80,Security and investigation activities,commercial
+81,Services to buildings and landscape activities,commercial
+82,Office administrative support and other business activities,commercial
+84,Public administration and defence compulsory social security,commercial
+85,Education,commercial
+86,Human health activities,commercial
+87,Residential care activities,commercial
+88,Social work activities without accommodation,commercial
+90,Creative arts and entertainment activities,commercial
+91,Libraries archives museums and other cultural activities,commercial
+92,Gambling and betting activities,commercial
+93,Sports activities and amusement and recreation activities,commercial
+94,Activities of membership organisations,commercial
+95,Repair of computers and personal and household goods,commercial
+96,Other personal service activities,commercial

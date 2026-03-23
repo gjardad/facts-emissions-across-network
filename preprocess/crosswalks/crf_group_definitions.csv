@@ -1,0 +1,11 @@
+crf_group,crf_pattern,description
+energy,^1A1a,Public electricity and heat production incl. main-activity CHP
+refining,^1A1b,Petroleum refining (verification only — no deployment firms in NACE 19)
+metals,^1A1c|^1A2a|^1A2b|^2C,Metals: combustion (incl. 1A1c solid fuels absorbed) + all metal-industry processes
+chemicals,^1A2c|^2B,Chemicals and pharma: combustion + all chemical-industry processes
+paper,^1A2d,Pulp paper and print: combustion only
+food,^1A2e,Food beverages and tobacco: combustion only
+minerals,^1A2f|^2A,Non-metallic minerals: combustion + all mineral-industry processes
+mfg_other,^1A2g|^2E,Other manufacturing and construction: combustion + electronics-industry processes
+commercial,^1A4a,Commercial and institutional: stationary combustion and off-road mobile
+agriculture,^1A4c,Agriculture forestry and fishing: stationary combustion off-road mobile and fishing
