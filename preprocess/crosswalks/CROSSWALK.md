@@ -13,6 +13,15 @@ E_deploy[group, year] = max(0, E_NIR[group, year] - E_ETS[group, year])
 `E_deploy` is the NIR budget distributed among non-ETS deployment firms within the
 group, proportionally to their imputed emission proxy (see `analysis/compute_b_loop.R`).
 
+## CO2 scope
+
+`build_nir_calibration_targets.R` extracts **CO2 only** (column 2 of Table1 and
+Table2(I), labelled "CO2 (kt)" in the BEL-CRT header row). CH4, N2O, and
+F-gases are present in adjacent columns but are not read. A future extension to
+total GHG (CO2-equivalent) would require reading those columns and applying
+AR5 100-year GWP weights (CO2=1, CH4≈28, N2O≈265, per UNFCCC decision
+18/CMA.1 annex para. 37 as referenced in the BEL-CRT footnotes).
+
 ## Files
 
 | File | Description |
