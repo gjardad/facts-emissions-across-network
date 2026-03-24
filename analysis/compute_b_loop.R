@@ -62,31 +62,29 @@ NEUMANN_TOL   <- 1e-8   # convergence: max(|term_k|) / (max(|m|) + eps) < tol
 MIN_N_STATS   <- 3L     # min firms per sector-year to compute a statistic
 
 # EU ETS annual average carbon price (EUR / tonne CO2), 2005–2022.
-# Source: ICAP weekly EUA spot prices, two files:
-#   RAW_DATA/raw/icap_euets_price_2010_18.csv  (2010–2018)
-#   RAW_DATA/raw/icap_euets_price_2019_26.csv  (2019–2026)
-#   Annual averages computed from weekly "Primary Market" observations.
-#   2005–2009 are approximate (*) — not in ICAP data.
+# Source: ICAP Allowance Price Explorer, secondary market daily prices.
+#   Raw data: RAW_DATA/raw/icap_systems.json (downloaded 2026-03-24)
+#   Annual averages computed from daily "Secondary Market" observations.
 # Phase 1 (2005–2007) allowances expired worthless → 2007 price ~0.
 CARBON_PRICE <- c(
-  "2005" = 18.0,   # (*)
-  "2006" = 17.1,   # (*)
-  "2007" =  0.7,   # (*) Phase 1 collapse
-  "2008" = 22.0,   # (*)
-  "2009" = 13.4,   # (*)
-  "2010" = 14.28,
-  "2011" = 13.27,
-  "2012" =  7.24,
-  "2013" =  4.37,
-  "2014" =  5.91,
-  "2015" =  7.62,
-  "2016" =  5.25,
-  "2017" =  5.76,
-  "2018" = 15.48,
-  "2019" = 24.72,
-  "2020" = 24.39,
-  "2021" = 54.15,
-  "2022" = 80.18
+  "2005" = 25.29,
+  "2006" = 21.53,
+  "2007" =  0.86,   # Phase 1 collapse
+  "2008" = 25.74,
+  "2009" = 18.41,
+  "2010" = 18.98,
+  "2011" = 18.08,
+  "2012" =  9.49,
+  "2013" =  5.94,
+  "2014" =  7.89,
+  "2015" =  8.52,
+  "2016" =  5.92,
+  "2017" =  6.63,
+  "2018" = 18.55,
+  "2019" = 27.84,
+  "2020" = 27.94,
+  "2021" = 62.25,
+  "2022" = 85.51
 )
 N_CORES_SET   <- 40L    # cores for draw parallelism; set explicitly (detectCores
                         # may undercount in restricted RMD environments)
