@@ -58,7 +58,7 @@ library(doParallel)
 library(foreach)
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-YEARS         <- 2005:2022
+YEARS         <- 2005:2021  # 2022 excluded: wage_bill data quality issue (see A_ITERATION.md)
 NEUMANN_MAXIT <- 50L    # max terms in Neumann series per (year, draw)
 NEUMANN_TOL   <- 1e-8   # convergence: max(|term_k|) / (max(|m|) + eps) < tol
 MIN_N_STATS   <- 3L     # min firms per sector-year to compute a statistic
