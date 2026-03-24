@@ -134,8 +134,9 @@ rm(df_annual_accounts_selected_sample_key_variables)
 cat("  Accounts firm-years:", nrow(accounts), "\n")
 
 load(file.path(PROC_DATA, "firm_year_total_imports.RData"))
+if ("vat_ano" %in% names(firm_year_total_imports))
+  firm_year_total_imports <- rename(firm_year_total_imports, vat = vat_ano)
 imports <- firm_year_total_imports %>%
-  rename(vat = vat_ano) %>%
   filter(year %in% YEARS) %>%
   select(vat, year, total_imports)
 rm(firm_year_total_imports)
