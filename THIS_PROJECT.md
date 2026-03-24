@@ -1,4 +1,4 @@
-## Project Overview: The aim of the project is establish facts about the distribution of emissions across the producton network in Belgium between 2005-2022.
+## Project Overview: The aim of the project is establish facts about the distribution of emissions across the producton network in Belgium between 2005-2021.
 
 ### Research Questions:
 
@@ -103,3 +103,7 @@ Access to the full NBB data is restricted to RMD through a VPN connection. RMD d
 When copying files from RMD to local 1, I first need to copy them to local 2, then from local 2 to the cloud (Dropbox/Claude), then from the Claude to local 1.
 In local 1 I have available a downsampled version of the full NBB data sets as well as the full training sample. I built the training sample in RMD and copied it to local 2.
 Any script that only requires `training_sample.RData` (e.g., CV scripts, alternative specs, rho comparisons) can be run locally on local 1. RMD is only needed for scripts that access the raw NBB data (e.g., preprocessing, proxy construction).**
+
+### Dropped year: 2022
+
+Year 2022 is excluded from the analysis. The annual accounts data for 2022 contains placeholder wage_bill values (EUR 1–2) for a large number of firms that had not yet filed their accounts at the time the data was extracted. While these firms appear in the data with 100% coverage, the near-zero wage bills cause the cost-based denominator of the Leontief A matrix to be dominated by domestic B2B purchases, pushing row sums to 1.0 for 51% of firms (vs. 1% in 2021). This invalidates the Leontief inverse computation for 2022. The sample covers 2005–2021 (17 years). See `A_ITERATION.md` for full diagnostics.
