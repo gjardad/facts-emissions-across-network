@@ -54,6 +54,8 @@ source(file.path(REPO_DIR, "paths.R"))
 library(dplyr)
 library(Matrix)
 library(parallel)
+library(doParallel)
+library(foreach)
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 YEARS         <- 2005:2022
@@ -86,8 +88,11 @@ CARBON_PRICE <- c(
   "2021" = 62.25,
   "2022" = 85.51
 )
-N_CORES_SET   <- 40L    # cores for draw parallelism; set explicitly (detectCores
-                        # may undercount in restricted RMD environments)
+N_CORES_SET <- if (tolower(Sys.info()[["user"]]) == "jardang") {
+  40L    # RMD: set explicitly (detectCores may undercount)
+} else {
+  max(1L, parallel::detectCores(logical = FALSE) - 2L)
+}
 
 cat("═══════════════════════════════════════════════════════════════\n")
 cat("  B-LOOP: NIR + LEONTIEF/NEUMANN + RQ1-RQ5\n")
@@ -103,7 +108,7 @@ cat("── Loading data ──────────────────�
 
 load(file.path(PROC_DATA, "deployment_proxy_list.RData"))
 B       <- length(proxy_list)
-N_CORES <- if (.Platform$OS.type == "windows") 1L else min(B, N_CORES_SET)
+N_CORES <- min(B, N_CORES_SET)
 cat("  proxy_list: B =", B, "draws\n")
 cat("  Cores for draw parallelism:", N_CORES, "\n")
 
@@ -130,6 +135,7 @@ cat("  Accounts firm-years:", nrow(accounts), "\n")
 
 load(file.path(PROC_DATA, "firm_year_total_imports.RData"))
 imports <- firm_year_total_imports %>%
+  rename(vat = vat_ano) %>%
   filter(year %in% YEARS) %>%
   select(vat, year, total_imports)
 rm(firm_year_total_imports)
@@ -365,10 +371,21 @@ for (t in YEARS) {
   eps_ets[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / cost_vec[ets_idx[ok_ets]]
   ets_vats_t <- eutl_t$vat[ok_ets & !is.na(ets_idx)]
 
-  # ── Draw loop (parallelised over B draws via mclapply) ────────────────────
-  # A is shared across all draws (read-only fork copy-on-write).
+  # ── Draw loop (parallelised over B draws via PSOCK + foreach) ─────────────
+  # A, cost_vec, eps_ets, etc. are exported to each worker once per year.
   # Each draw gets its own ε vector and Neumann computation.
-  draw_results <- mclapply(seq_len(B), function(b) {
+  cl <- makeCluster(N_CORES)
+  registerDoParallel(cl)
+  clusterEvalQ(cl, { library(dplyr); library(Matrix) })
+  clusterExport(cl, c("A", "cost_vec", "eps_ets", "all_vats", "ets_vats_t",
+                       "proxy_t", "deploy_nace", "E_dep_t", "accounts_t",
+                       "neumann_series", "compute_stats_bt",
+                       "gini", "pct_ratio", "safe_spearman",
+                       "NEUMANN_MAXIT", "NEUMANN_TOL", "MIN_N_STATS", "t"),
+                 envir = environment())
+
+  draw_results <- foreach(b = seq_len(B),
+                           .packages = c("dplyr", "Matrix")) %dopar% {
 
     proxy_b <- proxy_t[[b]]   # named vector vat → proxy_avg
 
@@ -424,7 +441,9 @@ for (t in YEARS) {
       k       = ns$k,
       rel_err = ns$rel_err
     )
-  }, mc.cores = N_CORES)
+  }
+
+  stopCluster(cl)
 
   # Collect results from all draws
   k_vec   <- integer(B)
