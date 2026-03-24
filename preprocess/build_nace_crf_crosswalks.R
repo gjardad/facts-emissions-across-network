@@ -9,7 +9,7 @@
 #   The content is domain knowledge derived from:
 #     - Annex I to the AEA Manual (2015): CRF–NACE Rev. 2 correspondence
 #     - NIR Belgium sub2025, pp. 94–95, 141–142 (CHP treatment)
-#   See preprocess/crosswalks/CROSSWALK.md for full rationale.
+#   See preprocess/crosswalks/NACE_CRF_CROSSWALK.md for full rationale.
 #
 # OUTPUT
 #   {REPO_DIR}/preprocess/crosswalks/nace_crf_crosswalk.csv
@@ -43,7 +43,7 @@ cat("═════════════════════════
 # Excluded: NACE 34 (does not exist), 40 (does not exist), 44, 48, 54, 57, 67,
 #           76, 83 (do not exist), 49–51 (transport — excluded by design),
 #           97–99 (households / extraterritorial).
-# See CROSSWALK.md §Exclusions for rationale.
+# See NACE_CRF_CROSSWALK.md §Exclusions for rationale.
 
 nace_crf <- rbind(
   # Agriculture, forestry, fishing
@@ -76,7 +76,7 @@ nace_crf <- rbind(
   # Rubber, plastics, non-metallic minerals
   data.frame(nace2d = "22", nace_label = "Manufacture of rubber and plastic products",    crf_group = "mfg_other"),
   data.frame(nace2d = "23", nace_label = "Manufacture of non-metallic mineral products",  crf_group = "minerals"),
-  # Metals (C24 + C25 both assigned to metals — see CROSSWALK.md Assumption B)
+  # Metals (C24 + C25 both assigned to metals — see NACE_CRF_CROSSWALK.md Assumption B)
   data.frame(nace2d = "24", nace_label = "Manufacture of basic metals",                   crf_group = "metals"),
   data.frame(nace2d = "25", nace_label = "Manufacture of fabricated metal products",      crf_group = "metals"),
   # Electronics, electrical, machinery, transport equipment, other mfg
@@ -166,7 +166,7 @@ stopifnot(!any(duplicated(nace_crf$nace2d)))
 # =============================================================================
 # Compact CRF codes have dots removed: "1.A.2.g." → "1A2g".
 # Each pattern is matched via grepl() against these compact codes.
-# See CROSSWALK.md for full documentation of scope and assumptions.
+# See NACE_CRF_CROSSWALK.md for full documentation of scope and assumptions.
 
 crf_defs <- data.frame(
   crf_group   = c("energy", "refining", "metals", "chemicals",

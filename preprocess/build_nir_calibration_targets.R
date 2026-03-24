@@ -6,7 +6,7 @@
 #   the CRF categories in scope, map to CRF groups via the NACE–CRF crosswalk,
 #   and save nir_calibration_targets.RData.
 #
-#   Only CO2 is extracted (kt). See preprocess/crosswalks/CROSSWALK.md for
+#   Only CO2 is extracted (kt). See preprocess/crosswalks/NACE_CRF_CROSSWALK.md for
 #   the rationale and a note on future extension to total GHG (CO2e).
 #
 # EXTRACTION LOGIC
