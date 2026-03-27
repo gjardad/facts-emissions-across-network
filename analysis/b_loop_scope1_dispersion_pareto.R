@@ -477,8 +477,16 @@ for (t in YEARS) {
     flags_all[[length(flags_all) + 1L]]     <- draw_results[[b]]$alloc_flags
   }
 
+  # Save intermediate checkpoint for this year
+  year_stats2d <- bind_rows(lapply(draw_results, `[[`, "stats2d"))
+  year_stats5d <- bind_rows(lapply(draw_results, `[[`, "stats5d"))
+  year_flags   <- bind_rows(lapply(draw_results, `[[`, "alloc_flags"))
+  save(year_stats2d, year_stats5d, year_flags,
+       file = file.path(PROC_DATA,
+                        sprintf("b_loop_pareto_year_%d.RData", t)))
+
   elapsed <- round(difftime(Sys.time(), t0_year, units = "secs"), 1)
-  cat(sprintf("(%s s)\n", elapsed))
+  cat(sprintf("(%s s) — saved checkpoint\n", elapsed))
   gc()
 }
 
