@@ -42,6 +42,7 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
   stop("Define REPO_DIR for this user.")
 }
 source(file.path(REPO_DIR, "paths.R"))
+source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 
 library(dplyr)
 
@@ -54,7 +55,7 @@ euets <- firm_year_belgian_euets %>%
   mutate(euets = 1)
 
 # ── Define non-ETS zero-emission sectors ─────────────────────────────────────
-ZERO_NACE2D <- c("17", "18", "19")
+ZERO_NACE2D <- c("17/18", "19")
 ZERO_C24_NACE4D <- c("2410", "2420", "2431", "2432", "2433", "2434",
                       "2451", "2452")
 
@@ -62,7 +63,7 @@ ZERO_C24_NACE4D <- c("2410", "2420", "2431", "2432", "2433", "2434",
 training_sample <- df_annual_accounts_selected_sample_key_variables %>%
   left_join(euets, by = c("vat", "year")) %>%
   mutate(
-    nace2d = substr(nace5d, 1, 2),
+    nace2d = make_nace2d(nace5d),
     nace4d = substr(nace5d, 1, 4),
     euets  = coalesce(euets, 0),
     is_zero_sector = nace2d %in% ZERO_NACE2D |

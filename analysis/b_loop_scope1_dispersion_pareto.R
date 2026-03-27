@@ -48,6 +48,7 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
 }
 source(file.path(REPO_DIR, "paths.R"))
 source(file.path(REPO_DIR, "utils", "calibration_pareto.R"))
+source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 
 library(dplyr)
 library(parallel)
@@ -94,7 +95,7 @@ load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData")
 accounts <- df_annual_accounts_selected_sample_key_variables %>%
   filter(year %in% YEARS) %>%
   select(vat, year, nace5d, revenue) %>%
-  mutate(nace2d  = substr(nace5d, 1, 2),
+  mutate(nace2d  = make_nace2d(nace5d),
          revenue = pmax(coalesce(revenue, 0), 0))
 rm(df_annual_accounts_selected_sample_key_variables)
 cat("  Accounts firm-years:", nrow(accounts), "\n")
@@ -109,7 +110,7 @@ nace_crf <- read.csv(
   select(nace2d, crf_group)
 
 deploy_nace <- deployment_panel %>%
-  mutate(nace2d = substr(nace5d, 1, 2)) %>%
+  mutate(nace2d = make_nace2d(nace5d)) %>%
   select(vat, nace2d, nace5d) %>%
   distinct(vat, .keep_all = TRUE) %>%
   left_join(nace_crf, by = "nace2d")
@@ -248,6 +249,7 @@ cat("── Main loop: years × draws ──────────────
 
 stats2d_all <- list()
 stats5d_all <- list()
+flags_all   <- list()
 t0_total    <- Sys.time()
 
 for (t in YEARS) {
@@ -269,6 +271,13 @@ for (t in YEARS) {
   ets_vats_t      <- eutl_t$vat[ok_ets]
   ets_emissions_t <- setNames(eutl_t$emissions[ok_ets], eutl_t$vat[ok_ets])
 
+  # ETS emitters with CRF group assignment (firm-level, for combined ranking)
+  ets_crf_t <- eutl_t[ok_ets, ] %>%
+    left_join(accounts_t %>% distinct(vat, nace2d), by = "vat") %>%
+    left_join(nace_crf, by = "nace2d") %>%
+    filter(!is.na(crf_group)) %>%
+    select(vat, emissions, crf_group)
+
   # ── Draw loop ──────────────────────────────────────────────────────────────
   cl <- makeCluster(N_CORES)
   registerDoParallel(cl)
@@ -282,7 +291,7 @@ for (t in YEARS) {
     draw_thr_list <- rep(FALLBACK_THRESHOLD, B)
   }
 
-  clusterExport(cl, c("ets_vats_t", "ets_emissions_t",
+  clusterExport(cl, c("ets_vats_t", "ets_emissions_t", "ets_crf_t",
                        "proxy_t", "deploy_nace", "E_dep_t", "accounts_t",
                        "draw_gpa_list", "draw_thr_list",
                        "compute_stats_bt", "gini", "pct_ratio",
@@ -296,7 +305,6 @@ for (t in YEARS) {
     gpa_b       <- draw_gpa_list[[b]]
     threshold_b <- draw_thr_list[b]
     if (is.na(threshold_b)) threshold_b <- 0
-    # If GPA failed for this draw, all cells will fall back to sinh
 
     # Build deployment firms with CRF group info
     deploy_b <- data.frame(
@@ -310,68 +318,129 @@ for (t in YEARS) {
       left_join(E_dep_t, by = "crf_group") %>%
       mutate(E_deploy = coalesce(E_deploy, 0))
 
+    # All CRF groups with either deployment or ETS firms
+    all_crf_groups <- union(unique(deploy_b$crf_group),
+                             unique(ets_crf_t$crf_group))
+
     # ── Pareto redistribution within each CRF group ────────────────────────
     deploy_imputed <- list()
+    alloc_flags    <- list()
 
-    for (cg in unique(deploy_b$crf_group)) {
-      cg_firms <- deploy_b[deploy_b$crf_group == cg, ]
-      E_cg     <- cg_firms$E_deploy[1]
-
-      if (E_cg <= 0 || nrow(cg_firms) == 0) next
-
-      proxy_levels <- pmax(sinh(cg_firms$proxy_val), 0)
-
-      # Apply threshold: zero out firms below threshold percentile
-      pos_mask <- proxy_levels > 0
-      if (sum(pos_mask) >= 2 && threshold_b > 0) {
-        tau <- quantile(proxy_levels[pos_mask], probs = threshold_b,
-                        names = FALSE)
-        proxy_levels[proxy_levels <= tau] <- 0
+    for (cg in all_crf_groups) {
+      cg_deploy <- deploy_b[deploy_b$crf_group == cg, ]
+      cg_ets    <- ets_crf_t[ets_crf_t$crf_group == cg, ]
+      n_ets     <- nrow(cg_ets)
+      E_cg      <- if (nrow(cg_deploy) > 0) cg_deploy$E_deploy[1] else {
+        ed <- E_dep_t$E_deploy[E_dep_t$crf_group == cg]
+        if (length(ed) > 0) ed[1] else 0
       }
+      min_ets_emit <- if (n_ets > 0) min(cg_ets$emissions) else Inf
 
-      emit_mask <- proxy_levels > 0
-      n_emit    <- sum(emit_mask)
-
-      if (n_emit == 0) next
-
-      if (n_emit == 1) {
-        # Single emitter gets the full budget
-        emit_idx <- which(emit_mask)
-        deploy_imputed[[length(deploy_imputed) + 1]] <- data.frame(
-          vat    = cg_firms$vat[emit_idx],
-          scope1 = E_cg,
-          euets  = 0L,
-          stringsAsFactors = FALSE
-        )
+      # ── Pure ETS: no deployment firms ──────────────────────────────────
+      if (nrow(cg_deploy) == 0) {
+        if (n_ets > 0) {
+          alloc_flags[[length(alloc_flags) + 1]] <- data.frame(
+            crf_group = cg, alloc_flag = "pure_ets", stringsAsFactors = FALSE)
+        }
         next
       }
 
-      # Rank emitters by proxy
-      emit_idx    <- which(emit_mask)
-      emit_proxy  <- proxy_levels[emit_idx]
-      ranks       <- rank(emit_proxy, ties.method = "average")
+      if (E_cg <= 0) next
 
-      # GPA weights
-      pw <- pareto_weights(ranks, n_emit, gpa_b)
+      # ── Determine sector type ──────────────────────────────────────────
+      is_mixed <- n_ets > 0
 
-      if (is.null(pw)) {
-        # Fallback: sinh-calibrated
-        total_sinh <- sum(sinh(cg_firms$proxy_val[emit_idx]))
-        if (total_sinh > 0) {
-          emissions_b <- E_cg * sinh(cg_firms$proxy_val[emit_idx]) / total_sinh
-        } else {
-          emissions_b <- rep(E_cg / n_emit, n_emit)
+      # ── Iterative threshold + allocation ───────────────────────────────
+      proxy_levels_full <- pmax(sinh(cg_deploy$proxy_val), 0)
+      thr_current       <- threshold_b
+      flag              <- if (is_mixed) "mixed_ok" else "pure_deploy"
+      MAX_ITER          <- 20L
+
+      for (iter in seq_len(MAX_ITER)) {
+        proxy_levels <- proxy_levels_full  # reset each iteration
+
+        # Apply threshold: zero out firms below percentile cutoff
+        pos_mask <- proxy_levels > 0
+        if (sum(pos_mask) >= 2 && thr_current > 0) {
+          tau <- quantile(proxy_levels[pos_mask], probs = thr_current,
+                          names = FALSE)
+          proxy_levels[proxy_levels <= tau] <- 0
         }
-      } else {
-        emissions_b <- E_cg * pw / sum(pw)
+
+        emit_mask      <- proxy_levels > 0
+        n_deploy_emit  <- sum(emit_mask)
+
+        if (n_deploy_emit == 0) {
+          # Threshold wiped everyone — halve and retry
+          if (thr_current > 1e-4) {
+            thr_current <- thr_current / 2
+            if (is_mixed) flag <- "mixed_lowered"
+            next
+          }
+          # threshold = 0 and still no emitters → skip
+          flag <- if (is_mixed) "mixed_no_deploy" else "pure_deploy"
+          break
+        }
+
+        # Combined ranking: deployment ranks 1..n_deploy_emit,
+        # ETS implicitly at n_deploy_emit+1..n_total
+        n_total    <- n_ets + n_deploy_emit
+        emit_idx   <- which(emit_mask)
+        emit_proxy <- proxy_levels[emit_idx]
+        ranks      <- rank(emit_proxy, ties.method = "average")
+
+        # GPA weights
+        pw <- pareto_weights(ranks, n_total, gpa_b)
+
+        if (is.null(pw)) {
+          # GPA failed → sinh fallback (still respecting n_total in principle)
+          flag <- "gpa_fallback_sinh"
+          total_sinh <- sum(sinh(cg_deploy$proxy_val[emit_idx]))
+          if (total_sinh > 0) {
+            emissions_b <- E_cg * sinh(cg_deploy$proxy_val[emit_idx]) / total_sinh
+          } else {
+            emissions_b <- rep(E_cg / n_deploy_emit, n_deploy_emit)
+          }
+        } else {
+          emissions_b <- E_cg * pw / sum(pw)
+        }
+
+        # Check upper-bound constraint (mixed sectors only)
+        if (is_mixed && max(emissions_b) >= min_ets_emit) {
+          if (thr_current > 1e-4) {
+            # Lower threshold to include more firms
+            thr_current <- thr_current / 2
+            flag <- "mixed_lowered"
+            next
+          }
+          # threshold = 0, constraint still violated → cap
+          flag <- "mixed_capped"
+          cap  <- min_ets_emit * (1 - 1e-6)
+          over <- which(emissions_b > cap)
+          freed <- sum(emissions_b[over] - cap)
+          emissions_b[over] <- cap
+          under <- which(emissions_b <= cap)
+          if (length(under) > 0) {
+            emissions_b[under] <- emissions_b[under] +
+              freed * emissions_b[under] / sum(emissions_b[under])
+          }
+        }
+        break  # constraint satisfied or capped
       }
 
-      deploy_imputed[[length(deploy_imputed) + 1]] <- data.frame(
-        vat    = cg_firms$vat[emit_idx],
-        scope1 = as.numeric(emissions_b),
-        euets  = 0L,
-        stringsAsFactors = FALSE
-      )
+      # Record flag
+      alloc_flags[[length(alloc_flags) + 1]] <- data.frame(
+        crf_group = cg, alloc_flag = flag, stringsAsFactors = FALSE)
+
+      # Store imputed emissions (if any emitters survived)
+      if (n_deploy_emit > 0) {
+        deploy_imputed[[length(deploy_imputed) + 1]] <- data.frame(
+          vat    = cg_deploy$vat[emit_idx],
+          scope1 = as.numeric(emissions_b),
+          euets  = 0L,
+          stringsAsFactors = FALSE
+        )
+      }
     }
 
     # Combine ETS + deployment
@@ -390,9 +459,13 @@ for (t in YEARS) {
 
     st <- compute_stats_bt(firms_bt)
 
+    flags_df <- if (length(alloc_flags) > 0) bind_rows(alloc_flags) else
+      data.frame(crf_group = character(0), alloc_flag = character(0))
+
     list(
-      stats2d = st$stats2d %>% mutate(year = t, draw = b),
-      stats5d = st$stats5d %>% mutate(year = t, draw = b)
+      stats2d    = st$stats2d %>% mutate(year = t, draw = b),
+      stats5d    = st$stats5d %>% mutate(year = t, draw = b),
+      alloc_flags = flags_df %>% mutate(year = t, draw = b)
     )
   }
 
@@ -401,6 +474,7 @@ for (t in YEARS) {
   for (b in seq_len(B)) {
     stats2d_all[[length(stats2d_all) + 1L]] <- draw_results[[b]]$stats2d
     stats5d_all[[length(stats5d_all) + 1L]] <- draw_results[[b]]$stats5d
+    flags_all[[length(flags_all) + 1L]]     <- draw_results[[b]]$alloc_flags
   }
 
   elapsed <- round(difftime(Sys.time(), t0_year, units = "secs"), 1)
@@ -417,8 +491,9 @@ cat(sprintf("\nAll years complete in %.1f min\n\n", total_time))
 # =============================================================================
 cat("── Aggregating across draws ─────────────────────────────────\n")
 
-all_stats2d <- bind_rows(stats2d_all)
-all_stats5d <- bind_rows(stats5d_all)
+all_stats2d    <- bind_rows(stats2d_all)
+all_stats5d    <- bind_rows(stats5d_all)
+all_alloc_flags <- bind_rows(flags_all)
 
 stat_cols <- c("s1_gini", "s1_p90p10", "s1_p75p25", "s1_var_log",
                "cp_p90p10", "cp_p75p25", "cp_var_log", "cp_p9010_log")
@@ -440,7 +515,18 @@ stats2d_summary <- summarise_draws(all_stats2d, c("nace2d", "year"))
 stats5d_summary <- summarise_draws(all_stats5d, c("nace5d", "year"))
 
 cat("  NACE 2-digit:", nrow(stats2d_summary), "sector-years\n")
-cat("  NACE 5-digit:", nrow(stats5d_summary), "sector-years\n\n")
+cat("  NACE 5-digit:", nrow(stats5d_summary), "sector-years\n")
+
+# Allocation flag summary
+flag_summary <- all_alloc_flags %>%
+  count(alloc_flag, name = "n") %>%
+  mutate(pct = round(100 * n / sum(n), 1))
+cat("\n  Allocation flags:\n")
+for (i in seq_len(nrow(flag_summary))) {
+  cat(sprintf("    %-25s %6d (%5.1f%%)\n",
+              flag_summary$alloc_flag[i], flag_summary$n[i], flag_summary$pct[i]))
+}
+cat("\n")
 
 
 # =============================================================================
@@ -453,6 +539,7 @@ save(
   stats5d_summary,
   all_stats2d,
   all_stats5d,
+  all_alloc_flags,
   file = OUT_PATH
 )
 

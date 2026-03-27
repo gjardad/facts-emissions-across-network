@@ -49,6 +49,10 @@ The imputation model from inferring_emissions is strictly preferable for non-ETS
 
 **4. Imputed emissions.** For firms not covered by the sources above, emissions are imputed using the prediction model developed in the inferring_emissions project.
 
+### Sector Conventions
+
+**NACE 17 (paper) and NACE 18 (printing) are ALWAYS treated as a single sector "17/18". NEVER treat them as separate sectors.** Both sectors share upstream pulp/paper supply chains and the distinction is uninformative for emission analysis. This applies everywhere: stratification, fixed effects, dispersion statistics, Youden threshold calibration, and any sector-level aggregation.
+
 ### Data Sources
 
 All data at the firm-level contain an unique firm-level identifier which is an anonymized VAT code. The code makes it possible to merge data sets.

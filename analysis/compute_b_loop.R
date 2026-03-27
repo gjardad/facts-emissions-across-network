@@ -50,6 +50,7 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
   stop("Define REPO_DIR for this user.")
 }
 source(file.path(REPO_DIR, "paths.R"))
+source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 
 library(dplyr)
 library(Matrix)
@@ -128,7 +129,7 @@ load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData")
 accounts <- df_annual_accounts_selected_sample_key_variables %>%
   filter(year %in% YEARS) %>%
   select(vat, year, nace5d, wage_bill) %>%
-  mutate(nace2d   = substr(nace5d, 1, 2),
+  mutate(nace2d   = make_nace2d(nace5d),
          wage_bill = pmax(coalesce(wage_bill, 0), 0))
 rm(df_annual_accounts_selected_sample_key_variables)
 cat("  Accounts firm-years:", nrow(accounts), "\n")
@@ -152,7 +153,7 @@ nace_crf <- read.csv(
   select(nace2d, crf_group)
 
 deploy_nace <- deployment_panel %>%
-  mutate(nace2d = substr(nace5d, 1, 2)) %>%
+  mutate(nace2d = make_nace2d(nace5d)) %>%
   select(vat, nace2d, nace5d) %>%
   distinct(vat, .keep_all = TRUE) %>%
   left_join(nace_crf, by = "nace2d")

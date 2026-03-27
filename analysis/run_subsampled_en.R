@@ -50,6 +50,7 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
 }
 source(file.path(REPO_DIR, "paths.R"))
 source(file.path(REPO_DIR, "utils", "calibration_pareto.R"))
+source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 
 library(dplyr)
 library(Matrix)
@@ -153,7 +154,7 @@ extract_suppliers <- function(fit, n_ctrl, eligible_sellers, s = "lambda.min") {
 
 # Mixed sectors: contain both emitters and confirmed non-emitters in training
 # NACE 17/18 combined (paper & printing), 19 (petroleum), 24 (iron & steel)
-MIXED_SECTORS <- c("17", "18", "19", "24")
+MIXED_SECTORS <- c("17/18", "19", "24")
 
 # Youden-optimal percentile threshold for one sector
 # proxy_vals: proxy values for all firms in the sector (including zeros)
@@ -217,8 +218,12 @@ run_one_subsample <- function(lhs, b2b_lhs, b2b_deploy,
     sort()
 
   if (length(eligible_sellers) == 0) {
-    return(data.frame(vat = character(0), year = integer(0),
-                      proxy = numeric(0), stringsAsFactors = FALSE))
+    return(list(
+      proxy      = data.frame(vat = character(0), year = integer(0),
+                               proxy = numeric(0), stringsAsFactors = FALSE),
+      gpa_params = NULL,
+      threshold_pct = NA_real_
+    ))
   }
 
   seller_map <- data.frame(
@@ -283,21 +288,22 @@ run_one_subsample <- function(lhs, b2b_lhs, b2b_deploy,
   names(inner_fold_map) <- firms_b
   inner_foldid <- unname(inner_fold_map[train_lhs$vat])
 
-  # --- 5.6 Fit cv.glmnet ---
+  # --- 5.6 Stage B: Fit cv.glmnet on full subsample (deployment coefficients) -
+  y_vec <- asinh(train_lhs$y)
+
   fit <- cv.glmnet(
-    x = X_full, y = asinh(train_lhs$y),
+    x = X_full, y = y_vec,
     family = "gaussian", alpha = alpha,
     penalty.factor = pf, foldid = inner_foldid,
     standardize = TRUE
   )
-  rm(X_full)
 
-  # --- 5.7 Extract positive supplier coefficients at lambda.min ---
+  # --- 5.7 Extract supplier coefficients at lambda.min (for deployment) ---
   coef_lookup <- extract_suppliers(fit, n_controls, eligible_sellers_enet,
                                     "lambda.min")
 
   if (nrow(coef_lookup) == 0) {
-    rm(fit)
+    rm(fit, X_full)
     return(list(
       proxy      = data.frame(vat = character(0), year = integer(0),
                                proxy = numeric(0), stringsAsFactors = FALSE),
@@ -307,7 +313,6 @@ run_one_subsample <- function(lhs, b2b_lhs, b2b_deploy,
   }
 
   # --- 5.8 Apply supplier coefficients to deployment firms ---
-  # Proxy = sum of coef_s * asinh(B2B purchase from seller s), floored at 0
   proxy <- b2b_deploy %>%
     inner_join(coef_lookup, by = "vat_i_ano") %>%
     group_by(vat_j_ano, year) %>%
@@ -316,40 +321,75 @@ run_one_subsample <- function(lhs, b2b_lhs, b2b_deploy,
     rename(vat = vat_j_ano) %>%
     mutate(proxy = pmax(proxy, 0))
 
-  # --- 5.9 Compute in-sample proxy for training firms in mixed sectors ---
-  mixed_lhs <- train_lhs[train_lhs$nace2d %in% MIXED_SECTORS, ]
+  # --- 5.9 Stage A: Inner-CV threshold (supplier-only OOS proxy) ------------
+  # For each inner fold k, fit EN on K-1 folds at lambda.min, extract supplier
+  # coefficients, and compute supplier-only proxy for fold k's mixed-sector
+  # firms via B2B data. These proxies are genuinely OOS w.r.t. the EN that
+  # produced them, mirroring deployment conditions.
+  mixed_idx <- which(train_lhs$nace2d %in% MIXED_SECTORS)
+  threshold_pct <- NA_real_
 
-  if (nrow(mixed_lhs) > 0) {
-    b2b_mixed <- b2b_lhs[b2b_lhs$vat_j_ano %in% mixed_lhs$vat, ]
-    proxy_mixed <- b2b_mixed %>%
-      inner_join(coef_lookup, by = "vat_i_ano") %>%
-      group_by(vat_j_ano, year) %>%
-      summarise(proxy = sum(coef * asinh(corr_sales_ij), na.rm = TRUE),
-                .groups = "drop") %>%
-      rename(vat = vat_j_ano) %>%
-      mutate(proxy = pmax(proxy, 0))
-    mixed_lhs <- mixed_lhs %>%
-      left_join(proxy_mixed, by = c("vat", "year")) %>%
-      mutate(proxy = coalesce(proxy, 0))
+  if (length(mixed_idx) > 0) {
+    mixed_df <- data.frame(
+      vat   = train_lhs$vat[mixed_idx],
+      year  = train_lhs$year[mixed_idx],
+      emit  = train_lhs$y[mixed_idx] > 0,
+      sec   = train_lhs$nace2d[mixed_idx],
+      fold  = inner_foldid[mixed_idx],
+      proxy = 0,
+      stringsAsFactors = FALSE
+    )
+
+    for (k in seq_len(K_inner)) {
+      rows_k <- which(mixed_df$fold == k)
+      if (length(rows_k) == 0) next
+
+      train_rows <- which(inner_foldid != k)
+
+      # Fit glmnet at the lambda.min chosen by Stage B (single lambda, fast)
+      fit_k <- glmnet(
+        x = X_full[train_rows, , drop = FALSE],
+        y = y_vec[train_rows],
+        family = "gaussian", alpha = alpha,
+        penalty.factor = pf, lambda = fit$lambda.min,
+        standardize = TRUE
+      )
+
+      coef_k <- extract_suppliers(fit_k, n_controls, eligible_sellers_enet,
+                                   s = fit$lambda.min)
+      if (nrow(coef_k) == 0) next
+
+      # Supplier-only proxy for held-out mixed-sector firms
+      fold_vats <- mixed_df$vat[rows_k]
+      proxy_k <- b2b_lhs[b2b_lhs$vat_j_ano %in% fold_vats, ] %>%
+        inner_join(coef_k, by = "vat_i_ano") %>%
+        group_by(vat_j_ano, year) %>%
+        summarise(proxy = sum(coef * asinh(corr_sales_ij), na.rm = TRUE),
+                  .groups = "drop") %>%
+        mutate(proxy = pmax(proxy, 0))
+
+      # Match back to mixed_df
+      key_df    <- paste(mixed_df$vat[rows_k], mixed_df$year[rows_k])
+      key_proxy <- paste(proxy_k$vat_j_ano, proxy_k$year)
+      m <- match(key_df, key_proxy)
+      mixed_df$proxy[rows_k] <- ifelse(is.na(m), 0, proxy_k$proxy[m])
+    }
+
+    # Youden threshold per mixed sector, then average
+    pcts <- numeric(0)
+    for (sec in unique(mixed_df$sec)) {
+      sec_mask <- mixed_df$sec == sec
+      pct_s <- youden_threshold_pct(mixed_df$proxy[sec_mask], mixed_df$emit[sec_mask])
+      if (!is.na(pct_s) && pct_s > 0) pcts <- c(pcts, pct_s)
+    }
+    if (length(pcts) > 0) threshold_pct <- mean(pcts)
   }
-  rm(fit)
+  rm(fit, X_full)
 
   # --- 5.10 GPA reference distribution from subsample's ETS emitters ---
   ets_emit <- train_lhs[train_lhs$euets == 1 & train_lhs$y > 0, ]
   ref_dist   <- build_reference_dist(ets_emit$y, ets_emit$year, ets_emit$nace2d)
   gpa_params <- fit_gpa(ref_dist)
-
-  # --- 5.11 CV threshold from mixed sectors (Youden's J per sector, averaged) ---
-  threshold_pct <- NA_real_
-  if (nrow(mixed_lhs) > 0) {
-    pcts <- numeric(0)
-    for (sec in unique(mixed_lhs$nace2d)) {
-      sec_df <- mixed_lhs[mixed_lhs$nace2d == sec, ]
-      pct_s <- youden_threshold_pct(sec_df$proxy, sec_df$y > 0)
-      if (!is.na(pct_s) && pct_s > 0) pcts <- c(pcts, pct_s)
-    }
-    if (length(pcts) > 0) threshold_pct <- mean(pcts)
-  }
 
   list(proxy = proxy, gpa_params = gpa_params, threshold_pct = threshold_pct)
 }

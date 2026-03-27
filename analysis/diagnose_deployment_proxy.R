@@ -30,6 +30,7 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
   stop("Define REPO_DIR for this user.")
 }
 source(file.path(REPO_DIR, "paths.R"))
+source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 
 library(dplyr)
 
@@ -41,7 +42,7 @@ load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData")
 
 # Attach NACE 2-digit (modal sector across years per firm)
 nace <- df_annual_accounts_selected_sample_key_variables %>%
-  mutate(nace2d = substr(nace5d, 1, 2)) %>%
+  mutate(nace2d = make_nace2d(nace5d)) %>%
   group_by(vat) %>%
   summarise(nace2d = names(which.max(table(nace2d))), .groups = "drop")
 

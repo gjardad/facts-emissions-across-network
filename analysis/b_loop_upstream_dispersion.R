@@ -44,6 +44,7 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
   stop("Define REPO_DIR for this user.")
 }
 source(file.path(REPO_DIR, "paths.R"))
+source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 
 library(dplyr)
 
@@ -68,7 +69,7 @@ load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData")
 accounts <- df_annual_accounts_selected_sample_key_variables %>%
   filter(year %in% YEARS) %>%
   select(vat, year, nace5d, revenue) %>%
-  mutate(nace2d  = substr(nace5d, 1, 2),
+  mutate(nace2d  = make_nace2d(nace5d),
          revenue = pmax(coalesce(revenue, 0), 0))
 rm(df_annual_accounts_selected_sample_key_variables)
 cat("  Accounts firm-years:", nrow(accounts), "\n\n")
