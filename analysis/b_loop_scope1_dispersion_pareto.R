@@ -12,14 +12,18 @@
 #   is applied to CRF group × year cells at deployment — same approximation
 #   as assuming the pooled GPA applies to any grouping of emitters.
 #
-#   For each of B subsample draws:
-#     1. NIR calibration → E_deploy per CRF group × year
+#   Pipeline:
+#     0. Pre-ETS backcast: for firms entering ETS after 2005, estimate
+#        pre-entry emissions using sector-year FE and first-two-year anchor.
+#        Subtract E_pre_ets from E_deploy; treat pre_ets firms as observed.
+#     1. NIR calibration → E_deploy = E_NIR - E_ETS - E_pre_ets per CRF × year
 #     2. Within each CRF group × year:
 #        a. Rank deployment firms by proxy (sinh-transformed to levels)
 #        b. Apply CV threshold: zero out firms below threshold percentile
 #        c. Map remaining ranks to GPA quantiles → exp(w) shares
 #        d. Calibrate to E_deploy
-#     3. Combine ETS (observed) + deployment (Pareto-imputed) emissions
+#        e. Apply 30 kt physics-based cap (replaces min-ETS constraint)
+#     3. Combine ETS + pre_ets (observed) + deployment (Pareto-imputed)
 #     4. Compute within-NACE-sector carbon productivity dispersion
 #
 # INPUT
@@ -60,6 +64,7 @@ YEARS         <- 2005:2021
 MIN_N_STATS   <- 3L
 FALLBACK_THRESHOLD <- 0.62  # used only if draw_params not available
 FALLBACK_GPA      <- TRUE   # set to FALSE once draw_params is generated on RMD
+DEPLOY_CAP    <- 30000      # physics-based upper bound (30 kt CO2/year)
 
 N_CORES_SET <- if (tolower(Sys.info()[["user"]]) == "jardang") {
   40L
@@ -120,7 +125,90 @@ cat("\n")
 
 
 # =============================================================================
-# SECTION 2: NIR calibration targets (fixed across draws)
+# SECTION 2: Pre-ETS backcast
+# =============================================================================
+# Firms entering ETS after 2005 have unobserved emissions in earlier years.
+# We backcast their emissions using their first two observed ETS years as
+# anchor, adjusted by sector-year fixed effects in log emissions.
+# These "pre_ets" emissions are subtracted from E_deploy and the firms are
+# treated as observed emitters alongside ETS firms.
+cat("── Pre-ETS backcast ─────────────────────────────────────────\n")
+
+eutl_pos <- eutl %>% filter(!is.na(emissions), emissions > 0)
+
+# First ETS year per firm
+ets_entry <- eutl_pos %>%
+  group_by(vat) %>%
+  summarise(first_ets_year = min(year), .groups = "drop")
+
+late_entrants <- ets_entry %>% filter(first_ets_year > min(YEARS))
+
+# Anchor: average of first two observed emissions
+anchor <- eutl_pos %>%
+  inner_join(late_entrants, by = "vat") %>%
+  group_by(vat) %>%
+  arrange(year) %>%
+  slice_head(n = 2) %>%
+  summarise(
+    e_anchor    = mean(emissions),
+    anchor_year = min(year),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    accounts %>%
+      group_by(vat) %>%
+      summarise(nace2d = names(which.max(table(nace2d))), .groups = "drop"),
+    by = "vat"
+  ) %>%
+  left_join(nace_crf, by = "nace2d") %>%
+  filter(!is.na(crf_group))
+
+# Sector-year means of log emissions (for FE adjustment)
+sector_year_mu <- eutl_pos %>%
+  left_join(accounts %>% distinct(vat, year, nace2d), by = c("vat", "year")) %>%
+  filter(!is.na(nace2d)) %>%
+  group_by(nace2d, year) %>%
+  summarise(mu = mean(log(emissions)), .groups = "drop")
+
+# Build backcast table
+pre_ets_list <- list()
+for (i in seq_len(nrow(anchor))) {
+  v <- anchor$vat[i]; s <- anchor$nace2d[i]; T_entry <- anchor$anchor_year[i]
+  e_anch <- anchor$e_anchor[i]; crf <- anchor$crf_group[i]
+  mu_T <- sector_year_mu$mu[sector_year_mu$nace2d == s &
+                             sector_year_mu$year == T_entry]
+  if (length(mu_T) == 0) next
+  pre_years <- accounts$year[accounts$vat == v & accounts$year < T_entry &
+                              accounts$year %in% YEARS]
+  pre_years <- unique(pre_years)
+  if (length(pre_years) == 0) next
+  for (yr in pre_years) {
+    mu_t <- sector_year_mu$mu[sector_year_mu$nace2d == s &
+                               sector_year_mu$year == yr]
+    e_hat <- if (length(mu_t) > 0) e_anch * exp(mu_t - mu_T) else e_anch
+    pre_ets_list[[length(pre_ets_list) + 1]] <- data.frame(
+      vat = v, year = yr, nace2d = s, crf_group = crf,
+      emissions = e_hat, stringsAsFactors = FALSE
+    )
+  }
+}
+
+pre_ets <- if (length(pre_ets_list) > 0) bind_rows(pre_ets_list) else
+  data.frame(vat = character(0), year = integer(0), nace2d = character(0),
+             crf_group = character(0), emissions = numeric(0))
+
+# Aggregate E_pre_ets by CRF group × year
+E_pre_ets <- pre_ets %>%
+  group_by(crf_group, year) %>%
+  summarise(E_pre_ets = sum(emissions), n_pre_ets = n(), .groups = "drop")
+
+cat("  Late entrants:", nrow(late_entrants), "firms\n")
+cat("  Backcasted firm-years:", nrow(pre_ets), "\n")
+cat("  Total E_pre_ets:", round(sum(pre_ets$emissions) / 1e6, 1), "Mt\n\n")
+
+
+# =============================================================================
+# SECTION 3: NIR calibration targets (fixed across draws)
 # =============================================================================
 cat("── NIR calibration targets ──────────────────────────────────\n")
 
@@ -137,12 +225,15 @@ E_deploy_panel <- nir_targets %>%
   filter(year %in% YEARS) %>%
   mutate(E_NIR = E_NIR_kt * 1000) %>%
   left_join(E_ETS_group, by = c("crf_group", "year")) %>%
-  mutate(E_ETS    = coalesce(E_ETS, 0),
-         E_deploy = pmax(E_NIR - E_ETS, 0))
+  left_join(E_pre_ets, by = c("crf_group", "year")) %>%
+  mutate(E_ETS      = coalesce(E_ETS, 0),
+         E_pre_ets  = coalesce(E_pre_ets, 0),
+         E_deploy   = pmax(E_NIR - E_ETS - E_pre_ets, 0))
 
-n_floored <- sum(E_deploy_panel$E_NIR < E_deploy_panel$E_ETS, na.rm = TRUE)
+n_floored <- sum(E_deploy_panel$E_NIR < (E_deploy_panel$E_ETS + E_deploy_panel$E_pre_ets),
+                  na.rm = TRUE)
 if (n_floored > 0)
-  cat("  WARNING:", n_floored, "group-years where E_ETS > E_NIR → floored to 0\n")
+  cat("  WARNING:", n_floored, "group-years where E_ETS + E_pre_ets > E_NIR → floored to 0\n")
 
 cat("  E_deploy built:", nrow(E_deploy_panel), "group-years\n\n")
 
@@ -278,6 +369,19 @@ for (t in YEARS) {
     filter(!is.na(crf_group)) %>%
     select(vat, emissions, crf_group)
 
+  # Pre-ETS firms for this year (backcasted emissions, treated as observed)
+  pre_ets_t <- pre_ets[pre_ets$year == t, ]
+  if (nrow(pre_ets_t) > 0) {
+    pre_ets_vats_t      <- pre_ets_t$vat
+    pre_ets_emissions_t <- setNames(pre_ets_t$emissions, pre_ets_t$vat)
+    pre_ets_crf_t       <- pre_ets_t %>% select(vat, emissions, crf_group)
+  } else {
+    pre_ets_vats_t      <- character(0)
+    pre_ets_emissions_t <- setNames(numeric(0), character(0))
+    pre_ets_crf_t       <- data.frame(vat = character(0), emissions = numeric(0),
+                                       crf_group = character(0))
+  }
+
   # ── Draw loop ──────────────────────────────────────────────────────────────
   cl <- makeCluster(N_CORES)
   registerDoParallel(cl)
@@ -292,11 +396,12 @@ for (t in YEARS) {
   }
 
   clusterExport(cl, c("ets_vats_t", "ets_emissions_t", "ets_crf_t",
+                       "pre_ets_vats_t", "pre_ets_emissions_t", "pre_ets_crf_t",
                        "proxy_t", "deploy_nace", "E_dep_t", "accounts_t",
                        "draw_gpa_list", "draw_thr_list",
                        "compute_stats_bt", "gini", "pct_ratio",
                        "pareto_weights",
-                       "MIN_N_STATS", "t"),
+                       "MIN_N_STATS", "DEPLOY_CAP", "t"),
                 envir = environment())
 
   draw_results <- foreach(b = seq_len(B), .packages = c("dplyr", "lmom")) %dopar% {
@@ -318,27 +423,30 @@ for (t in YEARS) {
       left_join(E_dep_t, by = "crf_group") %>%
       mutate(E_deploy = coalesce(E_deploy, 0))
 
-    # All CRF groups with either deployment or ETS firms
+    # All CRF groups with deployment, ETS, or pre-ETS firms
     all_crf_groups <- union(unique(deploy_b$crf_group),
-                             unique(ets_crf_t$crf_group))
+                             union(unique(ets_crf_t$crf_group),
+                                   unique(pre_ets_crf_t$crf_group)))
 
     # ── Pareto redistribution within each CRF group ────────────────────────
     deploy_imputed <- list()
     alloc_flags    <- list()
 
     for (cg in all_crf_groups) {
-      cg_deploy <- deploy_b[deploy_b$crf_group == cg, ]
-      cg_ets    <- ets_crf_t[ets_crf_t$crf_group == cg, ]
-      n_ets     <- nrow(cg_ets)
-      E_cg      <- if (nrow(cg_deploy) > 0) cg_deploy$E_deploy[1] else {
+      cg_deploy  <- deploy_b[deploy_b$crf_group == cg, ]
+      cg_ets     <- ets_crf_t[ets_crf_t$crf_group == cg, ]
+      cg_pre_ets <- pre_ets_crf_t[pre_ets_crf_t$crf_group == cg, ]
+      n_ets      <- nrow(cg_ets)
+      n_pre_ets  <- nrow(cg_pre_ets)
+      n_observed <- n_ets + n_pre_ets
+      E_cg       <- if (nrow(cg_deploy) > 0) cg_deploy$E_deploy[1] else {
         ed <- E_dep_t$E_deploy[E_dep_t$crf_group == cg]
         if (length(ed) > 0) ed[1] else 0
       }
-      min_ets_emit <- if (n_ets > 0) min(cg_ets$emissions) else Inf
 
-      # ── Pure ETS: no deployment firms ──────────────────────────────────
+      # ── Pure observed: no deployment firms ─────────────────────────────
       if (nrow(cg_deploy) == 0) {
-        if (n_ets > 0) {
+        if (n_observed > 0) {
           alloc_flags[[length(alloc_flags) + 1]] <- data.frame(
             crf_group = cg, alloc_flag = "pure_ets", stringsAsFactors = FALSE)
         }
@@ -348,7 +456,7 @@ for (t in YEARS) {
       if (E_cg <= 0) next
 
       # ── Determine sector type ──────────────────────────────────────────
-      is_mixed <- n_ets > 0
+      is_mixed <- n_observed > 0
 
       # ── Iterative threshold + allocation ───────────────────────────────
       proxy_levels_full <- pmax(sinh(cg_deploy$proxy_val), 0)
@@ -383,8 +491,8 @@ for (t in YEARS) {
         }
 
         # Combined ranking: deployment ranks 1..n_deploy_emit,
-        # ETS implicitly at n_deploy_emit+1..n_total
-        n_total    <- n_ets + n_deploy_emit
+        # observed (ETS + pre_ets) implicitly at n_deploy_emit+1..n_total
+        n_total    <- n_observed + n_deploy_emit
         emit_idx   <- which(emit_mask)
         emit_proxy <- proxy_levels[emit_idx]
         ranks      <- rank(emit_proxy, ties.method = "average")
@@ -393,7 +501,7 @@ for (t in YEARS) {
         pw <- pareto_weights(ranks, n_total, gpa_b)
 
         if (is.null(pw)) {
-          # GPA failed → sinh fallback (still respecting n_total in principle)
+          # GPA failed → sinh fallback
           flag <- "gpa_fallback_sinh"
           total_sinh <- sum(sinh(cg_deploy$proxy_val[emit_idx]))
           if (total_sinh > 0) {
@@ -405,17 +513,17 @@ for (t in YEARS) {
           emissions_b <- E_cg * pw / sum(pw)
         }
 
-        # Check upper-bound constraint (mixed sectors only)
-        if (is_mixed && max(emissions_b) >= min_ets_emit) {
+        # Check physics-based upper-bound constraint
+        if (max(emissions_b) >= DEPLOY_CAP) {
           if (thr_current > 1e-4) {
             # Lower threshold to include more firms
             thr_current <- thr_current / 2
-            flag <- "mixed_lowered"
+            flag <- if (is_mixed) "mixed_lowered" else "pure_deploy_lowered"
             next
           }
-          # threshold = 0, constraint still violated → cap
-          flag <- "mixed_capped"
-          cap  <- min_ets_emit * (1 - 1e-6)
+          # threshold ≈ 0, constraint still violated → cap
+          flag <- if (is_mixed) "mixed_capped" else "pure_deploy_capped"
+          cap  <- DEPLOY_CAP * (1 - 1e-6)
           over <- which(emissions_b > cap)
           freed <- sum(emissions_b[over] - cap)
           emissions_b[over] <- cap
@@ -443,15 +551,22 @@ for (t in YEARS) {
       }
     }
 
-    # Combine ETS + deployment
+    # Combine ETS + pre_ets + deployment
     ets_df <- data.frame(
       vat = ets_vats_t, scope1 = ets_emissions_t[ets_vats_t],
       euets = 1L, stringsAsFactors = FALSE
     )
+    pre_ets_df <- if (length(pre_ets_vats_t) > 0) {
+      data.frame(vat = pre_ets_vats_t,
+                 scope1 = pre_ets_emissions_t[pre_ets_vats_t],
+                 euets = 0L, stringsAsFactors = FALSE)
+    } else {
+      data.frame(vat = character(0), scope1 = numeric(0), euets = integer(0))
+    }
     deploy_df <- if (length(deploy_imputed) > 0) bind_rows(deploy_imputed) else
       data.frame(vat = character(0), scope1 = numeric(0), euets = integer(0))
 
-    firms_bt <- bind_rows(ets_df, deploy_df) %>%
+    firms_bt <- bind_rows(ets_df, pre_ets_df, deploy_df) %>%
       group_by(vat) %>%
       summarise(scope1 = sum(scope1), euets = max(euets), .groups = "drop") %>%
       left_join(accounts_t %>% select(vat, nace2d, nace5d, revenue), by = "vat") %>%
