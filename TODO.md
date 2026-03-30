@@ -9,3 +9,4 @@
 7. Implement pre_ets backcast in b_loop_scope1_dispersion_pareto.R: backcast emissions for firms entering ETS after the current year using sector-year fixed effects and first-two-year anchor
 8. Implement 30kt physics-based cap in b_loop_scope1_dispersion_pareto.R: replace min(ETS) constraint with fixed 30kt upper bound
 9. Update nace_crf_crosswalk.csv on RMD (NACE 38 → energy)
+10. Cross-validate the pre_ets backcasting procedure: hold out ETS firms observed from 2005, pretend they enter in 2008 or 2012, backcast their 2005-2007 or 2005-2011 emissions using the sector-year FE + first-two-year anchor method, and compare backcasted vs actual emissions
