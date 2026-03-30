@@ -400,7 +400,70 @@ The CV percentile threshold (~0.55–0.69) was tuned on three mixed sectors (17/
 
 At deployment, the emitter share of non-ETS firms is unknown by definition. A conservative choice would be to use the pooled threshold (~0.70 percentile, tuned on all three mixed sectors together), accepting that it may be too aggressive for some sectors and too lenient for others.
 
-## 9. Scripts
+## 9. Physics-based upper bound on non-ETS firm emissions
+
+### 9.1 The constraint problem
+
+At deployment, mixed CRF-group × year cells contain both ETS firms (observed) and deployment firms (imputed). The Pareto allocation places deployment firms below ETS firms in the combined ranking, which implies that the highest-emission deployment firm should emit less than the lowest-emission ETS firm. In practice, this constraint is violated in 86% of mixed sector-years (see section 5.5), because the Pareto shape concentrates too much weight on top-ranked deployment firms relative to the small ETS firms at the bottom of the ETS distribution.
+
+The original constraint — deployment < min(ETS within CRF group) — is problematic for two reasons. First, the minimum ETS emitter within a CRF group may be an outlier (a plant that shut down mid-year) or a firm in a different NACE sector with structurally lower emissions. Second, in the CRF groups that aggregate many NACE sectors (e.g., mfg_other), the minimum ETS emitter can be as low as 24 tonnes, constraining deployment firms in unrelated sectors with much higher typical emissions.
+
+### 9.2 Derivation of the 25 kt CO2/year cap
+
+We replace the data-driven min(ETS) constraint with a physics-based upper bound derived from the EU ETS regulatory threshold.
+
+**Regulatory threshold.** The EU ETS covers combustion installations with a rated thermal input exceeding 20 MW (Directive 2003/87/EC, Annex I). Non-ETS firms, by definition, operate combustion installations at or below this capacity.
+
+**Fuel assumption: natural gas.** We assume the marginal non-ETS installation combusts natural gas. This is justified for Belgium by three lines of evidence:
+
+1. **Aggregate fuel mix.** The Belgian NID (2025 submission) reports that gaseous fuels accounted for 55–65% of manufacturing energy consumption during 2005–2011, rising from 45% in 1990 to 70% by 2021 (NID Section 3.1.1.1, Figure 3.2.b). In the commercial and institutional sector, natural gas and gaseous fuels represent 77% of energy consumption (NID Section 3.1.1.2). These shares are for all installations, including large ETS-covered plants.
+
+2. **Concentration of solid fuels in large ETS installations.** Coal and coke consumption in Belgium is concentrated in a small number of large facilities that are all covered by the EU ETS: blast furnaces and coke ovens in the iron and steel sector (NACE 24), cement kilns (NACE 23), and large power plants (NACE 35). The NID notes that coal was phased out of power generation in the Flemish region by 2017, and was already concentrated in a handful of large Electrabel plants during 2005–2011 (NID Section 3.2.6). None of the sub-20MW emission sources discussed in the NID use solid fuels.
+
+3. **Infrastructure and economics.** Belgium has extensive natural gas pipeline infrastructure operated by Fluxys (high-pressure transmission) and regional distribution system operators. The NID documents that DSOs have reported gas offtakes per NACE code since 2005, confirming pipeline access at the firm level across industrial and commercial sectors (NID Section 3.2.5). Coal combustion at sub-20MW scale requires dedicated bulk storage, handling equipment, and specialized boilers whose capital costs are disproportionate to the thermal capacity. Combined with increasingly restrictive air quality regulations on particulates and SO₂ in Flanders, Brussels, and Wallonia, sub-20MW coal installations are not economically viable in Belgium's context.
+
+Using the natural gas assumption is conservative: the IPCC 2006 CO₂ emission factor for natural gas (56.1 t CO₂/TJ) is the lowest among fossil fuels. A non-ETS installation burning gas oil, heavy fuel oil, or coal at the same capacity would emit 1.3–1.7× more, making 25 kt a lower bound rather than an upper bound.
+
+**Capacity factor assumption: 60%.** We assume the installation operates at 60% of its rated capacity on an annual basis (≈ 5,256 full-load hours per year). This is the midpoint of the 50–70% range typical for industrial boilers and small combined heat-and-power units, based on:
+
+- The IPCC Good Practice Guidance (2000, Section 2.2) notes that industrial stationary combustion sources operate intermittently depending on process demand, with utilization rates varying by application: process heat boilers typically run 4,000–6,000 hours/year (46–68%), while peaking units may run as few as 500 hours.
+- EU energy efficiency benchmarking studies report average utilization rates of 50–65% for industrial steam boilers in Western Europe (IEA, 2007; European Commission, Reference Document on Best Available Techniques for Large Combustion Plants, 2006).
+- The 60% assumption implies the installation is used regularly but not as baseload — consistent with process heat demand that follows production schedules (nights, weekends, seasonal variation).
+
+**Calculation.**
+
+> Emissions = Capacity × CF × Hours/year × Seconds/hour × EF
+
+> = 20 MW × 0.60 × 8,760 h/yr × 3.6 GJ/MWh × 56.1 t CO₂/TJ × 10⁻³ TJ/GJ
+
+> = 20 × 0.60 × 8,760 × 3.6 × 56.1 / 10⁶ kt
+
+> ≈ 21.2 kt CO₂/year
+
+We round up to **25 kt CO₂/year** to provide a margin for installations that operate at slightly higher capacity factors (up to ~70%) or use small amounts of liquid fuel alongside gas.
+
+**Reference table.** Annual CO₂ emissions (kt) at 20 MW rated thermal input by fuel and capacity factor:
+
+|  | 40% | 50% | 60% | 70% | 80% |
+|---|---|---|---|---|---|
+| Natural gas (56.1 t/TJ) | 14.2 | 17.7 | **21.2** | 24.8 | 28.3 |
+| Gas oil/diesel (74.1 t/TJ) | 18.7 | 23.4 | 28.0 | 32.7 | 37.4 |
+| Heavy fuel oil (77.4 t/TJ) | 19.5 | 24.4 | 29.3 | 34.2 | 39.1 |
+| Coal (95.0 t/TJ) | 24.0 | 30.0 | 36.0 | 41.9 | 47.9 |
+
+The 25 kt cap corresponds to natural gas at ~70% capacity factor, gas oil at ~50%, or coal at ~40%. Any non-ETS firm exceeding 25 kt would need to either operate at a larger capacity than 20 MW (violating the ETS threshold), burn a higher-carbon fuel at high capacity (unlikely in Belgium's gas-dominated context), or both.
+
+### 9.3 Application in the Pareto allocation
+
+The 25 kt cap replaces the data-driven min(ETS) constraint. In the iterative allocation loop (section 5.5), the upper-bound check becomes:
+
+> if max(emissions_deployment) ≥ 25,000: cap and redistribute
+
+This is applied uniformly across all CRF groups and years, rather than varying by the composition of the ETS firms in each cell. The cap does not depend on which ETS firms happen to be present, eliminating the pathological cases where a single small ETS firm (e.g., 24 tonnes in mfg_other) constrains thousands of deployment firms.
+
+**Effect on feasibility.** With the 25 kt cap, 24 of 28 mixed sector-years become feasible (up from 7/28 with the min-ETS cap). The only sector that remains infeasible is energy (CRF 1.A.1), where the average deployment firm would need to absorb 100–185 kt — far above any sub-20MW installation. The energy sector requires separate treatment (see section 8.1 on deployment considerations).
+
+## 10. Scripts
 
 | Script | Purpose | Location |
 |---|---|---|
@@ -412,7 +475,7 @@ At deployment, the emitter share of non-ETS firms is unknown by definition. A co
 | `table_pareto_redistribution.R` | Mixed table: sinh vs Pareto for EN, plus all models | `figures_tables/` |
 | `figure_lmoment_diagnostic.R` | Publication-quality L-moment ratio diagram + table | `figures_tables/` |
 
-## 10. Data
+## 11. Data
 
 | File | Contents |
 |---|---|
