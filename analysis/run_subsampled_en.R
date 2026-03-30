@@ -29,6 +29,8 @@
 #   {PROC_DATA}/training_sample.RData        — EU ETS + zero-emission non-ETS
 #
 # OUTPUT
+#   {PROC_DATA}/deployment_firm_years.RData
+#     deployment_firm_years : data.frame (vat, year) defining the deployment grid
 #   {PROC_DATA}/deployment_proxy_avg.RData
 #     proxy_avg  : data.frame (vat, year, proxy_avg, proxy_sd) for all
 #                  deployment firm-years observed in B2B data
@@ -118,17 +120,35 @@ cat("Sectors in training sample:", length(unique(lhs$primary_nace2d)), "\n\n")
 # =============================================================================
 # STEP 3: Split B2B into training-buyer and deployment-buyer panels
 # =============================================================================
+# Year-specific split: a firm that enters ETS in year T is in training for
+# years >= T but in deployment for years < T. This avoids dropping pre-entry
+# years of late ETS entrants from both training and deployment.
 cat("Splitting B2B into training and deployment panels (years >= 2005)...\n")
 b2b_filtered <- b2b %>%
   filter(year >= 2005)
 
-deploy_vats <- setdiff(unique(b2b_filtered$vat_j_ano), training_vats)
-cat("  Training buyers:", length(training_vats), "\n")
-cat("  Deployment buyers:", length(deploy_vats), "\n")
+# Build year-specific training firm-year set
+training_vy <- lhs %>%
+  distinct(vat, year)
 
-b2b_lhs    <- b2b_filtered[b2b_filtered$vat_j_ano %in% training_vats, ]
-b2b_deploy <- b2b_filtered[b2b_filtered$vat_j_ano %in% deploy_vats, ]
-rm(b2b, b2b_filtered)
+b2b_lhs <- b2b_filtered %>%
+  inner_join(training_vy, by = c("vat_j_ano" = "vat", "year" = "year"))
+
+b2b_deploy <- b2b_filtered %>%
+  anti_join(training_vy, by = c("vat_j_ano" = "vat", "year" = "year"))
+
+# For reporting: permanent training VATs vs late-entrant deployment firm-years
+deploy_vats <- unique(b2b_deploy$vat_j_ano)
+late_entrant_vy <- b2b_deploy %>%
+  filter(vat_j_ano %in% training_vats) %>%
+  distinct(vat_j_ano, year)
+
+cat("  Training buyers (ever in ETS/zero-sector):", length(training_vats), "\n")
+cat("  Deployment buyers (total unique):", length(deploy_vats), "\n")
+cat("  Late-entrant pre-ETS firm-years in deployment:",
+    nrow(late_entrant_vy), "\n")
+
+rm(b2b, b2b_filtered, training_vy, late_entrant_vy)
 
 cat("  B2B training rows:", nrow(b2b_lhs),
     "| B2B deployment rows:", nrow(b2b_deploy), "\n\n")
@@ -486,13 +506,13 @@ if (use_parallel) {
 cat("Averaging proxy across B draws...\n")
 
 # Canonical deployment firm-year grid: union of all (vat, year) pairs
-all_deploy_fy <- b2b_deploy %>%
+deployment_firm_years <- b2b_deploy %>%
   distinct(vat_j_ano, year) %>%
   rename(vat = vat_j_ano)
 
 # For each draw, fill missing firm-years with 0 (no supplier matches → proxy = 0)
 proxy_matrix <- do.call(cbind, lapply(proxy_list, function(px) {
-  all_deploy_fy %>%
+  deployment_firm_years %>%
     left_join(px, by = c("vat", "year")) %>%
     mutate(proxy = coalesce(proxy, 0)) %>%
     pull(proxy)
@@ -502,14 +522,14 @@ proxy_avg_vec <- rowMeans(proxy_matrix)
 proxy_sd_vec  <- apply(proxy_matrix, 1, sd)
 rm(proxy_matrix)
 
-proxy_avg <- all_deploy_fy %>%
+proxy_avg <- deployment_firm_years %>%
   mutate(
     proxy_avg = proxy_avg_vec,
     proxy_sd  = proxy_sd_vec
   )
 
-cat("Deployment proxy panel:", nrow(proxy_avg), "firm-years,",
-    n_distinct(proxy_avg$vat), "firms\n")
+cat("Deployment firm-years:", nrow(deployment_firm_years), "obs,",
+    n_distinct(deployment_firm_years$vat), "firms\n")
 cat("  Predicted emitters (proxy_avg > 0):",
     sum(proxy_avg$proxy_avg > 0),
     sprintf("(%.1f%%)\n", 100 * mean(proxy_avg$proxy_avg > 0)))
@@ -519,9 +539,11 @@ cat("  Mean proxy SD:", round(mean(proxy_avg$proxy_sd, na.rm = TRUE), 4), "\n\n"
 # =============================================================================
 # STEP 8: Save
 # =============================================================================
-# proxy_avg: small — copy to local 1 for diagnostics and downstream analysis
+# deployment_firm_years: defines the deployment grid (vat, year) — copy to local 1
+# proxy_avg: averaged proxy values for deployment firms — copy to local 1
 # proxy_list: heavy (B draws) — keep on RMD for uncertainty propagation (Stage B)
 
+save(deployment_firm_years, file = file.path(PROC_DATA, "deployment_firm_years.RData"))
 save(proxy_avg,  file = file.path(PROC_DATA, "deployment_proxy_avg.RData"))
 save(proxy_list, file = file.path(PROC_DATA, "deployment_proxy_list.RData"))
 save(draw_params, file = file.path(PROC_DATA, "deployment_draw_params.RData"))
@@ -532,6 +554,7 @@ gpa_ok     <- sapply(draw_params, function(x) !is.null(x$gpa_params))
 
 cat("══════════════════════════════════════════════\n")
 cat("Saved:\n")
+cat("  deployment_firm_years.RData  —", nrow(deployment_firm_years), "firm-years (copy to local 1)\n")
 cat("  deployment_proxy_avg.RData   —", nrow(proxy_avg), "rows (copy to local 1)\n")
 cat("  deployment_proxy_list.RData  —", length(proxy_list), "draws (keep on RMD)\n")
 cat("  deployment_draw_params.RData —", length(draw_params), "draws (copy to local 1)\n")

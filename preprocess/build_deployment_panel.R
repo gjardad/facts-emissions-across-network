@@ -12,7 +12,7 @@
 #   panel generated on RMD.
 #
 # INPUT
-#   {PROC_DATA}/deployment_proxy_avg.RData   — defines deployment firm-years
+#   {PROC_DATA}/deployment_firm_years.RData   — defines deployment firm-years
 #   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
 #
 # OUTPUT
@@ -37,15 +37,14 @@ source(file.path(REPO_DIR, "paths.R"))
 library(dplyr)
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-cat("Loading deployment proxy...\n")
-load(file.path(PROC_DATA, "deployment_proxy_avg.RData"))
+cat("Loading deployment firm-years...\n")
+load(file.path(PROC_DATA, "deployment_firm_years.RData"))
 
 cat("Loading annual accounts...\n")
 load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData"))
 
 # ── Build panel ───────────────────────────────────────────────────────────────
-deployment_panel <- proxy_avg %>%
-  select(vat, year) %>%
+deployment_panel <- deployment_firm_years %>%
   left_join(
     df_annual_accounts_selected_sample_key_variables %>%
       select(vat, year, nace5d, revenue),
