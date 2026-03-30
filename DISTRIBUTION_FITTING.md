@@ -408,7 +408,7 @@ At deployment, mixed CRF-group × year cells contain both ETS firms (observed) a
 
 The original constraint — deployment < min(ETS within CRF group) — is problematic for two reasons. First, the minimum ETS emitter within a CRF group may be an outlier (a plant that shut down mid-year) or a firm in a different NACE sector with structurally lower emissions. Second, in the CRF groups that aggregate many NACE sectors (e.g., mfg_other), the minimum ETS emitter can be as low as 24 tonnes, constraining deployment firms in unrelated sectors with much higher typical emissions.
 
-### 9.2 Derivation of the 25 kt CO2/year cap
+### 9.2 Derivation of the 30 kt CO2/year cap
 
 We replace the data-driven min(ETS) constraint with a physics-based upper bound derived from the EU ETS regulatory threshold.
 
@@ -422,7 +422,7 @@ We replace the data-driven min(ETS) constraint with a physics-based upper bound 
 
 3. **Infrastructure and economics.** Belgium has extensive natural gas pipeline infrastructure operated by Fluxys (high-pressure transmission) and regional distribution system operators. The NID documents that DSOs have reported gas offtakes per NACE code since 2005, confirming pipeline access at the firm level across industrial and commercial sectors (NID Section 3.2.5). Coal combustion at sub-20MW scale requires dedicated bulk storage, handling equipment, and specialized boilers whose capital costs are disproportionate to the thermal capacity. Combined with increasingly restrictive air quality regulations on particulates and SO₂ in Flanders, Brussels, and Wallonia, sub-20MW coal installations are not economically viable in Belgium's context.
 
-Using the natural gas assumption is conservative: the IPCC 2006 CO₂ emission factor for natural gas (56.1 t CO₂/TJ) is the lowest among fossil fuels. A non-ETS installation burning gas oil, heavy fuel oil, or coal at the same capacity would emit 1.3–1.7× more, making 25 kt a lower bound rather than an upper bound.
+Using the natural gas assumption is conservative: the IPCC 2006 CO₂ emission factor for natural gas (56.1 t CO₂/TJ) is the lowest among fossil fuels. A non-ETS installation burning gas oil, heavy fuel oil, or coal at the same capacity would emit 1.3–1.7× more, making 30 kt a conservative upper bound.
 
 **Capacity factor assumption: 60%.** We assume the installation operates at 60% of its rated capacity on an annual basis (≈ 5,256 full-load hours per year). This is the midpoint of the 50–70% range typical for industrial boilers and small combined heat-and-power units, based on:
 
@@ -440,7 +440,7 @@ Using the natural gas assumption is conservative: the IPCC 2006 CO₂ emission f
 
 > ≈ 21.2 kt CO₂/year
 
-We round up to **25 kt CO₂/year** to provide a margin for installations that operate at slightly higher capacity factors (up to ~70%) or use small amounts of liquid fuel alongside gas.
+We round up to **30 kt CO₂/year** to provide a margin for installations that operate at higher capacity factors (up to ~80%), use small amounts of liquid fuel alongside gas, or operate multiple sub-20MW units at the same site.
 
 **Reference table.** Annual CO₂ emissions (kt) at 20 MW rated thermal input by fuel and capacity factor:
 
@@ -451,17 +451,35 @@ We round up to **25 kt CO₂/year** to provide a margin for installations that o
 | Heavy fuel oil (77.4 t/TJ) | 19.5 | 24.4 | 29.3 | 34.2 | 39.1 |
 | Coal (95.0 t/TJ) | 24.0 | 30.0 | 36.0 | 41.9 | 47.9 |
 
-The 25 kt cap corresponds to natural gas at ~70% capacity factor, gas oil at ~50%, or coal at ~40%. Any non-ETS firm exceeding 25 kt would need to either operate at a larger capacity than 20 MW (violating the ETS threshold), burn a higher-carbon fuel at high capacity (unlikely in Belgium's gas-dominated context), or both.
+The 30 kt cap corresponds to natural gas at ~80% capacity factor, gas oil at ~60%, or coal at ~50%. Any non-ETS firm exceeding 30 kt would need to either operate at a larger capacity than 20 MW (violating the ETS threshold), burn a higher-carbon fuel at high capacity (unlikely in Belgium's gas-dominated context), or both. A firm at exactly 20 MW burning natural gas at the assumed 60% capacity factor emits ~21.2 kt; the margin between 21.2 and 30 kt accommodates uncertainty in capacity factors and fuel mix.
 
 ### 9.3 Application in the Pareto allocation
 
-The 25 kt cap replaces the data-driven min(ETS) constraint. In the iterative allocation loop (section 5.5), the upper-bound check becomes:
+The 30 kt cap replaces the data-driven min(ETS) constraint. In the iterative allocation loop (section 5.5), the upper-bound check becomes:
 
-> if max(emissions_deployment) ≥ 25,000: cap and redistribute
+> if max(emissions_deployment) ≥ 30,000: cap and redistribute
 
 This is applied uniformly across all CRF groups and years, rather than varying by the composition of the ETS firms in each cell. The cap does not depend on which ETS firms happen to be present, eliminating the pathological cases where a single small ETS firm (e.g., 24 tonnes in mfg_other) constrains thousands of deployment firms.
 
-**Effect on feasibility.** With the 25 kt cap, 24 of 28 mixed sector-years become feasible (up from 7/28 with the min-ETS cap). The only sector that remains infeasible is energy (CRF 1.A.1), where the average deployment firm would need to absorb 100–185 kt — far above any sub-20MW installation. The energy sector requires separate treatment (see section 8.1 on deployment considerations).
+### 9.4 NACE 38 assignment to CRF energy
+
+The energy CRF group (1.A.1) maps to NACE 35 (electricity, gas, steam supply) and **NACE 38** (waste collection, treatment, disposal, recovery). The inclusion of NACE 38 follows from the Belgian NID's treatment of waste incineration: since 2005 in the Flemish region and 2006 in Wallonia, all municipal waste incineration plants produce electricity and/or useful heat, and their combustion emissions are allocated to CRF category 1.A.1.a (public electricity and heat production) per IPCC guidelines (NID Section 3.2.6).
+
+**This is a strong and problematic assumption.** Only a small fraction of NACE 38 firms are waste-to-energy incinerators — the IMJV data identifies roughly 5–9 such firms in Flanders (see `analysis/IMJV_README.md`), plus approximately 4 in Wallonia. The remaining ~200 NACE 38 deployment firms per year are regular waste collection, recycling, and treatment businesses whose combustion emissions (heating, vehicle fleets) belong to CRF 1.A.4 (commercial/institutional) or CRF 5C (waste), not to 1.A.1.a.
+
+We adopt this mapping despite its imprecision because:
+
+1. **The alternative is worse.** Without NACE 38, the energy CRF group has only ~37–113 NACE 35 deployment firms absorbing 4–7 million tonnes of E_deploy — an average of 80–185 kt per firm, far exceeding what any sub-20MW installation can plausibly emit. This makes the Pareto allocation infeasible in every year.
+
+2. **With NACE 38, per-firm burden drops to 16–31 kt.** Adding ~200 NACE 38 firms brings deployment firm counts to 212–258, and per-firm allocation to within the physics-based cap. The Pareto shape then concentrates emissions on the top-ranked firms (which includes the actual waste-to-energy incinerators, since they have large B2B transaction volumes and high proxy values), while the many small waste firms at the bottom of the ranking receive near-zero emissions.
+
+3. **The Pareto allocation self-corrects partially.** Under the GPA redistribution, firms are ranked by their proxy value. The large waste incinerators — which are the NACE 38 firms that genuinely belong in 1.A.1.a — will have high proxy values (large B2B transaction volumes with energy-related suppliers). Regular waste collection firms will have low proxy values and receive minimal emissions. The ranking mechanism thus approximates the correct assignment even though the CRF mapping treats all NACE 38 firms identically.
+
+4. **The firm-level activity data needed to resolve this properly is not available.** Identifying which specific NACE 38 firms operate waste-to-energy installations would require matching IMJV enterprise numbers to anonymized VAT codes (possible only on RMD, and only for Flemish firms) or obtaining plant-level environmental permit data. Neither is currently feasible at scale.
+
+This assumption should be revisited if plant-level activity data becomes available, or if the resulting emission distributions for NACE 38 firms appear implausible in downstream analysis.
+
+**Effect on feasibility.** With the 30 kt cap and NACE 38 included in the energy CRF group, all mixed sector-years become feasible across all CRF groups for 2009–2021. The years 2005–2008 require the additional pre_ets backcast adjustment (section 8) to bring per-firm burden below 30 kt.
 
 ## 10. Scripts
 
