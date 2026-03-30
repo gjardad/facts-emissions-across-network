@@ -412,12 +412,13 @@ for (t in YEARS) {
     if (is.na(threshold_b)) threshold_b <- 0
 
     # Build deployment firms with CRF group info
+    # Exclude pre_ets firms to avoid double-counting (they are treated as observed)
     deploy_b <- data.frame(
       vat       = names(proxy_b),
       proxy_val = as.numeric(proxy_b),
       stringsAsFactors = FALSE
     ) %>%
-      filter(proxy_val > 0) %>%
+      filter(proxy_val > 0, !(vat %in% pre_ets_vats_t)) %>%
       left_join(deploy_nace, by = "vat") %>%
       filter(!is.na(crf_group)) %>%
       left_join(E_dep_t, by = "crf_group") %>%
