@@ -124,19 +124,192 @@ with three parameters: location ξ, scale α, shape k.
 
 ## 5. Redistribution within each cell
 
-For a held-out (sector, year) cell with n firms predicted as emitters:
+### 5.1 Overview
 
-1. **Rank** firms by proxy: highest proxy = rank n, lowest = rank 1.
+The core idea: given a known total E_target for a group of firms, distribute it among ranked firms so that the relative spacing between firms in log-emission space matches the shape of a fitted GPA distribution.
 
-2. **Map rank to quantile position:** p_i = (rank_i − 0.5) / n. This is the Hazen plotting position — it maps rank 1 to 0.5/n (just above 0) and rank n to (n−0.5)/n (just below 1), placing each rank at the midpoint of its probability bin.
+The procedure has three ingredients:
+- A **ranking** of firms (from the EN proxy)
+- A **distributional shape** (from the fitted GPA)
+- A **total** to calibrate to (E_target, known from NIR minus ETS)
 
-3. **Look up GPA quantile:** w_i = Q_GPA(p_i). The GPA quantile function maps probability p to a deviation in log space — how far a firm at that quantile is from the sector mean. The top-ranked firm gets a large positive deviation (well above sector mean), the bottom-ranked firm gets a negative deviation (well below).
+The ranking tells us *who* emits more; the GPA tells us *how much more*; the total tells us *how much in aggregate*.
 
-4. **Convert to shares and calibrate:**
+### 5.2 Formal definitions
 
-> yhat_i = E_target × exp(w_i) / Σⱼ exp(w_j)
+**Setup.** Consider a group g (a sector-year cell in CV, or a CRF-group × year cell at deployment) with:
+- n firms classified as emitters (proxy > 0, above the CV threshold if applicable)
+- A known total E_target to distribute among them
+- Proxy values {v₁, ..., vₙ} from the EN, where vᵢ = sinh(proxyᵢ) > 0
 
-The w_i are log-space deviations. exp(w_i) converts to multiplicative factors relative to the sector mean. Normalizing by the sum gives shares; multiplying by E_target gives tonnes. This is equivalent to log(yhat_i) = c + w_i, where c absorbs the sector-year level.
+**Step 1: Rank.** Assign integer ranks r₁, ..., rₙ by ascending proxy value:
+
+> rᵢ = rank(vᵢ),    rᵢ ∈ {1, ..., n}
+
+The firm with the smallest proxy gets rank 1 (bottom of the distribution), the firm with the largest proxy gets rank n (top).
+
+**Step 2: Plotting positions.** Convert ranks to probabilities using the Hazen plotting position:
+
+> pᵢ = (rᵢ − 0.5) / N
+
+where N is the total number of emitters in the distribution. In the CV evaluation setting, N = n (only the firms in the held-out cell). At deployment, N = n_deploy + n_ETS, where deployment firms occupy ranks 1, ..., n_deploy and ETS firms implicitly occupy ranks n_deploy + 1, ..., N (see section 5.5).
+
+The Hazen position maps rank 1 to (0.5)/N ≈ 0 and rank n to (n − 0.5)/N ≈ n/N, placing each rank at the midpoint of its probability bin. This avoids boundary artifacts (p = 0 or p = 1 would produce infinite quantiles under many distributions).
+
+**Step 3: GPA quantiles.** Evaluate the GPA quantile function at each plotting position:
+
+> wᵢ = Q_GPA(pᵢ; ξ, α, k)
+
+where Q_GPA is the inverse CDF of the Generalized Pareto distribution:
+
+> Q_GPA(p; ξ, α, k) = ξ + (α/k) [1 − (1 − p)^k]
+
+Each wᵢ is a deviation in log-emission space: how far above or below the sector mean a firm at quantile pᵢ should be. Firms near the top (high pᵢ) get large positive wᵢ; firms near the bottom get negative wᵢ.
+
+**Step 4: Exponentiate to get unnormalized weights.**
+
+> ωᵢ = exp(wᵢ − max(w))
+
+Subtracting max(w) before exponentiating is a numerical stability trick — it doesn't affect the shares. The weights ωᵢ are proportional to the emission level each firm should have relative to the others: if wᵢ − wⱼ = 1, firm i should emit exp(1) ≈ 2.72 times more than firm j.
+
+**Step 5: Normalize and calibrate.**
+
+> ŷᵢ = E_target × ωᵢ / Σⱼ ωⱼ
+
+This ensures Σᵢ ŷᵢ = E_target exactly. The share of firm i is sᵢ = ωᵢ / Σⱼ ωⱼ.
+
+**What the GPA controls.** The GPA parameters (ξ, α, k) determine only the *relative spacing* between quantiles — how spread out firms are in log-emission space. The absolute level is entirely determined by E_target and the number of firms n. Two groups with the same GPA but different E_target or n will have different emission levels but the same Gini coefficient, the same p90/p10 ratio, and the same variance of log emissions. This is the key property: the GPA governs *dispersion*, while calibration governs *level*.
+
+### 5.3 Worked example (CV evaluation setting)
+
+Suppose we have a held-out sector-year cell with 6 firms predicted as emitters and E_target = 1,000 tonnes. The fitted GPA has parameters ξ = −1.05, α = 1.62, k = −0.10 (representative values from our data).
+
+**Step 1.** The firms have proxy values (in levels, after sinh): {12, 45, 78, 150, 310, 820}. Ranks: {1, 2, 3, 4, 5, 6}.
+
+**Step 2.** Plotting positions (N = 6, same as n in CV):
+
+| Firm | Proxy | Rank rᵢ | pᵢ = (rᵢ − 0.5)/6 |
+|---|---|---|---|
+| A | 12 | 1 | 0.083 |
+| B | 45 | 2 | 0.250 |
+| C | 78 | 3 | 0.417 |
+| D | 150 | 4 | 0.583 |
+| E | 310 | 5 | 0.750 |
+| F | 820 | 6 | 0.917 |
+
+**Step 3.** GPA quantiles wᵢ = Q_GPA(pᵢ; −1.05, 1.62, −0.10):
+
+Using Q_GPA(p) = ξ + (α/k)[1 − (1−p)^k] = −1.05 + (1.62/−0.10)[1 − (1−p)^(−0.10)]:
+
+| Firm | pᵢ | wᵢ = Q_GPA(pᵢ) |
+|---|---|---|
+| A | 0.083 | −0.908 |
+| B | 0.250 | −0.577 |
+| C | 0.417 | −0.153 |
+| D | 0.583 | 0.432 |
+| E | 0.750 | 1.359 |
+| F | 0.917 | 3.520 |
+
+Note how the spacing increases toward the top — the gap between firms E and F (2.16 units in log space) is much larger than between A and B (0.33 units). This is the heavy right tail of the GPA: the top firm is disproportionately larger than the rest.
+
+**Step 4.** Unnormalized weights (subtract max = 3.520):
+
+| Firm | wᵢ − 3.520 | ωᵢ = exp(wᵢ − 3.520) |
+|---|---|---|
+| A | −4.428 | 0.0119 |
+| B | −4.097 | 0.0166 |
+| C | −3.673 | 0.0254 |
+| D | −3.088 | 0.0456 |
+| E | −2.161 | 0.1152 |
+| F | 0.000 | 1.0000 |
+| **Total** | | **1.2148** |
+
+**Step 5.** Shares and calibrated emissions (E_target = 1,000):
+
+| Firm | Share sᵢ | ŷᵢ (tonnes) |
+|---|---|---|
+| A | 1.0% | 9.8 |
+| B | 1.4% | 13.7 |
+| C | 2.1% | 20.9 |
+| D | 3.8% | 37.5 |
+| E | 9.5% | 94.8 |
+| F | 82.3% | 823.2 |
+| **Total** | **100%** | **1,000.0** |
+
+**Interpretation.** The top-ranked firm (F) gets 82% of the total — this reflects the heavy tail of the within-sector emission distribution. The ratio between the top and bottom firms is 823.2 / 9.8 ≈ 84:1 in emission levels, corresponding to wF − wA = 3.520 − (−0.908) = 4.43 in log space (exp(4.43) ≈ 84). This ratio is entirely determined by the GPA shape, not by the proxy values themselves — the proxy only determines who is ranked where.
+
+**The role of the proxy.** Notice that firm F has a proxy 68× larger than firm A (820 vs 12), but gets only 84× more emissions. Under sinh-calibrated allocation, the ratio would be sinh(proxy_F)/sinh(proxy_A) — potentially thousands-to-one depending on the asinh-space values. The Pareto approach discards the magnitude information in the proxy and uses only the ranking, replacing magnitude with the empirically-estimated GPA shape.
+
+### 5.4 What "matching the Pareto" means precisely
+
+When we say the within-sector distribution "matches" the fitted GPA, we mean:
+
+1. **The quantile function is preserved.** If you take the imputed emissions {ŷ₁, ..., ŷₙ}, compute log(ŷᵢ), demean them within the cell, sort them, and plot the i-th smallest against the plotting position pᵢ = (i − 0.5)/n, the resulting curve traces the GPA quantile function Q_GPA(p). This is by construction.
+
+2. **Dispersion statistics are determined by the GPA.** The Gini coefficient, p90/p10 ratio, and variance of log emissions of {ŷ₁, ..., ŷₙ} are all functions of the GPA parameters (ξ, α, k) and the number of firms n, not of the proxy values or E_target. Changing E_target rescales all ŷᵢ proportionally, leaving dispersion statistics unchanged. Changing the ranking (swapping which firm gets rank 3 vs rank 4) changes who gets what, but not the distribution of emissions across quantiles.
+
+3. **What is NOT matched.** The GPA determines the shape of the distribution within each cell but not:
+   - The level (set by E_target)
+   - Which firm gets which quantile position (set by the proxy ranking)
+   - The number of emitters (set by the CV threshold)
+
+### 5.5 Deployment: combined ranking with ETS firms
+
+At deployment, each CRF-group × year cell may contain both ETS firms (with observed emissions) and deployment firms (to be imputed). The key difference from the CV setting is the **combined ranking**: deployment firms are placed *below* ETS firms in the within-cell distribution.
+
+**Setup.** A CRF-group × year cell has:
+- n_ETS firms with observed emissions {e₁, ..., e_{n_ETS}}
+- n_deploy deployment firms classified as emitters (proxy > threshold)
+- E_deploy = E_NIR − E_ETS to distribute among deployment firms
+- N = n_ETS + n_deploy total emitters in the cell
+
+**Ranking convention.** Deployment firms occupy ranks 1, ..., n_deploy (bottom of the distribution). ETS firms occupy ranks n_deploy + 1, ..., N (top of the distribution). Within each group, firms are ranked by their proxy (deployment) or observed emissions (ETS). The implicit assumption is that every deployment firm emits less than every ETS firm.
+
+**Plotting positions for deployment firms.** With N total emitters:
+
+> pᵢ = (rᵢ − 0.5) / N,    rᵢ ∈ {1, ..., n_deploy}
+
+Since rᵢ ≤ n_deploy < N, all deployment plotting positions satisfy pᵢ < n_deploy/N < 1. The deployment firms occupy only the lower portion of the distribution. The highest-ranked deployment firm has p = (n_deploy − 0.5)/N, which is well below 1 when n_ETS is large relative to n_deploy. This compresses all deployment firms into the left tail of the GPA.
+
+**Worked example.** CRF group "food", year 2010:
+- 3 ETS firms: emissions = {50, 100, 150} tonnes. min_ets_emit = 50.
+- 5 deployment firms with proxy > threshold. E_deploy = 200 tonnes.
+- N = 3 + 5 = 8 total emitters.
+
+Deployment firm plotting positions (ranks 1–5 out of N = 8):
+
+| Deploy firm | Rank | pᵢ = (rank − 0.5)/8 |
+|---|---|---|
+| d1 (lowest proxy) | 1 | 0.0625 |
+| d2 | 2 | 0.1875 |
+| d3 | 3 | 0.3125 |
+| d4 | 4 | 0.4375 |
+| d5 (highest proxy) | 5 | 0.5625 |
+
+Compare with the CV setting where N = n = 5: the same 5 firms would have positions {0.10, 0.30, 0.50, 0.70, 0.90}. With 3 ETS firms added to the combined ranking, the deployment firms are compressed into the range [0.06, 0.56] instead of [0.10, 0.90]. This has two effects:
+
+1. **Lower quantiles.** Each deployment firm maps to a smaller GPA quantile, yielding a more negative wᵢ and a smaller share. The top deployment firm gets Q_GPA(0.56) instead of Q_GPA(0.90) — much less extreme.
+
+2. **Less dispersion among deployment firms.** The spread of plotting positions is narrower (0.50 range vs 0.80 range), so the ratio between the top and bottom deployment firm is smaller.
+
+Using the same GPA as the earlier example (ξ = −1.05, α = 1.62, k = −0.10):
+
+| Deploy firm | pᵢ | wᵢ | ωᵢ (unnorm.) | Share | ŷᵢ (tonnes) |
+|---|---|---|---|---|---|
+| d1 | 0.0625 | −0.945 | 0.275 | 10.1% | 20.2 |
+| d2 | 0.1875 | −0.710 | 0.348 | 12.7% | 25.5 |
+| d3 | 0.3125 | −0.431 | 0.460 | 16.8% | 33.7 |
+| d4 | 0.4375 | −0.091 | 0.646 | 23.7% | 47.4 |
+| d5 | 0.5625 | 0.346 | 1.000 | 36.7% | 73.3 |
+| **Total** | | | **2.728** | **100%** | **200.0** |
+
+Note: the shares are much more even (10%–37%) compared to the CV example (1%–82%). This is because all deployment firms are compressed into the lower-middle portion of the GPA, where the quantile function is relatively flat.
+
+**Upper-bound constraint check.** max(ŷᵢ) = 73.3. Is 73.3 ≥ min_ets_emit = 50? **Yes — violated.** The top deployment firm would emit more than the smallest ETS firm, breaking the assumption that deployment firms are smaller.
+
+In this case, the code would:
+1. Halve the CV threshold and retry (adding more firms → larger N → smaller plotting positions → smaller shares per firm)
+2. If the threshold reaches zero and the constraint is still violated, **cap** the violating firms at min_ets_emit × (1 − 10⁻⁶) and redistribute the freed emissions proportionally to uncapped firms
 
 ## 6. Cross-validated threshold for the extensive margin
 
@@ -239,7 +412,7 @@ At deployment, the emitter share of non-ETS firms is unknown by definition. A co
 | `table_pareto_redistribution.R` | Mixed table: sinh vs Pareto for EN, plus all models | `figures_tables/` |
 | `figure_lmoment_diagnostic.R` | Publication-quality L-moment ratio diagram + table | `figures_tables/` |
 
-## 9. Data
+## 10. Data
 
 | File | Contents |
 |---|---|
