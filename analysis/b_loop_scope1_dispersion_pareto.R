@@ -449,7 +449,13 @@ for (t in YEARS) {
       if (nrow(cg_deploy) == 0) {
         if (n_observed > 0) {
           alloc_flags[[length(alloc_flags) + 1]] <- data.frame(
-            crf_group = cg, alloc_flag = "pure_ets", stringsAsFactors = FALSE)
+            crf_group      = cg,
+            alloc_flag     = "pure_ets",
+            n_deploy_total = 0L,
+            n_deploy_emit  = 0L,
+            thr_initial    = NA_real_,
+            thr_effective  = NA_real_,
+            stringsAsFactors = FALSE)
         }
         next
       }
@@ -537,9 +543,15 @@ for (t in YEARS) {
         break  # constraint satisfied or capped
       }
 
-      # Record flag
+      # Record flag + diagnostics
       alloc_flags[[length(alloc_flags) + 1]] <- data.frame(
-        crf_group = cg, alloc_flag = flag, stringsAsFactors = FALSE)
+        crf_group      = cg,
+        alloc_flag     = flag,
+        n_deploy_total = nrow(cg_deploy),
+        n_deploy_emit  = n_deploy_emit,
+        thr_initial    = threshold_b,
+        thr_effective  = thr_current,
+        stringsAsFactors = FALSE)
 
       # Store imputed emissions (if any emitters survived)
       if (n_deploy_emit > 0) {

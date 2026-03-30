@@ -1,0 +1,9 @@
+"Source","Granularity","Unit","p90_p10","log_9010"
+"Belgium ETS-only (NACE 2-digit)","2-digit","firm",42.7,2.41
+"Belgium ETS-only (NACE 5-digit)","5-digit","firm",17.5,1.66
+"","","",,
+"Lyubich et al. (2018)","6-digit NAICS","plant",9.7,2.27
+"De Lyon & Dechezlepretre (2025)","3-4 digit NACE","firm (20+ emp.)",24,3.18
+"","","",,
+"Belgium all firms (NACE 2-digit)","2-digit","firm",84.2,3.75
+"Belgium all firms (NACE 5-digit)","5-digit","firm",50.6,2.74

@@ -1,0 +1,24 @@
+"NACE","Sector","ETS_5d","Full_5d","ETS_log9010","Full_log9010","Ratio_log"
+"10","Food",4,29,0.8,2.62,3.3
+"11","Beverages",,6,,2.53,
+"12","Tobacco",,1,,1.83,
+"13","Textiles",2,11,0.68,2.81,4.1
+"14","Wearing apparel",,5,,2.9,
+"15","Leather",,2,,2.37,
+"16","Wood",1,7,1.4,3.36,2.4
+"17",,1,1,1.17,1.17,1
+"19","Coke & petroleum",1,1,3.6,3.6,1
+"20","Chemicals",4,17,2.59,2.65,1
+"21","Pharmaceuticals",1,3,0.83,2.51,3
+"22","Rubber & plastics",,6,,3.36,
+"23","Non-metallic minerals",7,22,0.92,2.33,2.5
+"24","Basic metals",1,8,2.11,2.36,1.1
+"25","Fabricated metals",,19,,3.24,
+"26","Electronics",,8,,2.88,
+"27","Electrical equipment",,10,,2.82,
+"28","Machinery",,23,,2.94,
+"29","Motor vehicles",1,5,3.13,3.63,1.2
+"30","Other transport",1,5,1.02,2.07,2
+"31","Furniture",,5,,2.92,
+"32","Other manufacturing",,8,,3.01,
+"33","Repair & installation",,9,,3.07,
