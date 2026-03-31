@@ -1,30 +1,37 @@
 ###############################################################################
-# analysis/build_upstream_emissions_v2.R
+# analysis/build_upstream_emissions.R
 #
 # PURPOSE
-#   Build firm-level upstream embodied emissions for each year and each of
-#   B subsample draws. This is the expensive step (A matrix construction +
-#   Neumann series). Downstream scripts load the output and compute
-#   statistics cheaply.
+#   Build firm-level scope 1 and upstream embodied emissions for each year
+#   and each of B = 50 subsample draws. This is the expensive step (A matrix
+#   construction + Neumann series). Downstream RQ scripts load the output
+#   and compute statistics cheaply.
 #
 #   For each year:
-#     1. Load firm-level scope 1 allocation from b_allocation_pareto.R
-#     2. Build A matrix from B2B (fixed across draws)
-#     3. Build cost_vec (fixed across draws)
-#     4. For each draw b = 1..B:
-#        a. Build emission intensity vector eps_b from allocation
-#        b. Neumann series: m = (I - A)^{-1} eps
-#        c. scope1_i = cost_i * eps_i; upstream_i = cost_i * (m_i - eps_i)
+#     1. Build A matrix from B2B (fixed across draws)
+#     2. Build cost_vec (fixed across draws)
+#     3. For each draw b = 1..B:
+#        a. NIR calibration → deployment ε
+#        b. Neumann series: m = (I - A)^{-1} ε
+#        c. scope1_i = cost_i × ε_i;  upstream_i = cost_i × (m_i - ε_i)
 #        d. Decompose upstream into across-sector and within-sector components
-#           at both NACE 2-digit and 5-digit granularity
-#     5. Save firm-level results per year
+#           at both NACE 2-digit and 5-digit granularity:
+#             upstream_across_Xd_i = cost_i × Σ_j A_{ij} × m̄_{s_Xd(j)}
+#             upstream_within_Xd_i = upstream_i - upstream_across_Xd_i
+#           where m̄_s is the unweighted sector-average Neumann multiplier.
+#     4. Save firm-level (vat, scope1, upstream, upstream_across_2d,
+#        upstream_within_2d, upstream_across_5d, upstream_within_5d,
+#        euets) per draw
 #
 # INPUT
-#   {PROC_DATA}/allocation_pareto/alloc_YYYY.RData  (from b_allocation_pareto.R)
+#   {PROC_DATA}/deployment_proxy_list.RData
 #   {PROC_DATA}/b2b_selected_sample.RData
 #   {PROC_DATA}/firm_year_belgian_euets.RData
 #   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
+#   {PROC_DATA}/deployment_panel.RData
+#   {PROC_DATA}/nir_calibration_targets.RData
 #   {PROC_DATA}/firm_year_total_imports.RData
+#   {REPO_DIR}/preprocess/crosswalks/nace_crf_crosswalk.csv
 #
 # OUTPUT
 #   {PROC_DATA}/upstream_emissions/firms_YYYY.RData  (one file per year)
@@ -39,7 +46,7 @@
 # RUNS ON: RMD
 ###############################################################################
 
-# -- Paths --------------------------------------------------------------------
+# ── Paths ─────────────────────────────────────────────────────────────────────
 if (tolower(Sys.info()[["user"]]) == "jardang") {
   REPO_DIR <- "C:/Users/jardang/Documents/facts-emissions-across-network"
 } else if (tolower(Sys.info()[["user"]]) == "jota_") {
@@ -58,12 +65,13 @@ library(parallel)
 library(doParallel)
 library(foreach)
 
-# -- Parameters ---------------------------------------------------------------
-YEARS         <- 2005:2021
+# ── Parameters ────────────────────────────────────────────────────────────────
+YEARS         <- 2005:2021  # 2022 excluded: wage_bill data quality issue
 NEUMANN_MAXIT <- 50L
 NEUMANN_TOL   <- 1e-8
+MIN_N_STATS   <- 3L
 
-# EU ETS annual average carbon price (EUR / tonne CO2), 2005-2022.
+# EU ETS annual average carbon price (EUR / tonne CO2), 2005–2022.
 # Source: ICAP Allowance Price Explorer, secondary market daily prices.
 CARBON_PRICE <- c(
   "2005" = 25.29, "2006" = 21.53, "2007" =  0.86, "2008" = 25.74,
@@ -79,41 +87,26 @@ N_CORES_SET <- if (tolower(Sys.info()[["user"]]) == "jardang") {
   max(1L, parallel::detectCores(logical = FALSE) - 2L)
 }
 
-ALLOC_DIR <- file.path(PROC_DATA, "allocation_pareto")
-OUT_DIR   <- file.path(PROC_DATA, "upstream_emissions")
+OUT_DIR <- file.path(PROC_DATA, "upstream_emissions")
 if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
 
-cat("===================================================================\n")
-cat("  BUILD UPSTREAM EMISSIONS: A matrix + Neumann per year x draw\n")
-cat("  Years:", min(YEARS), "--", max(YEARS),
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("  BUILD UPSTREAM EMISSIONS: A matrix + Neumann per year × draw\n")
+cat("  Years:", min(YEARS), "–", max(YEARS),
     "| Neumann tol:", NEUMANN_TOL, "| max iter:", NEUMANN_MAXIT, "\n")
-cat("===================================================================\n\n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
 
 
 # =============================================================================
-# SECTION 1: Load data (B2B, accounts, imports -- shared across years)
+# SECTION 1: Load data
 # =============================================================================
-cat("-- Loading data -----------------------------------------------------\n")
+cat("── Loading data ─────────────────────────────────────────────\n")
 
-# Check that allocation files exist
-n_alloc <- sum(file.exists(
-  file.path(ALLOC_DIR, sprintf("alloc_%d.RData", YEARS))
-))
-cat("  Allocation files found:", n_alloc, "of", length(YEARS), "\n")
-if (n_alloc == 0) stop("No allocation files found in ", ALLOC_DIR)
-
-# Determine B from first available allocation file
-for (t_check in YEARS) {
-  f_check <- file.path(ALLOC_DIR, sprintf("alloc_%d.RData", t_check))
-  if (file.exists(f_check)) {
-    load(f_check)
-    B <- length(year_firms_by_draw)
-    rm(year_firms_by_draw, year_flags)
-    break
-  }
-}
+load(file.path(PROC_DATA, "deployment_proxy_list.RData"))
+B       <- length(proxy_list)
 N_CORES <- min(B, N_CORES_SET)
-cat("  B =", B, "draws | Cores:", N_CORES, "\n")
+cat("  proxy_list: B =", B, "draws\n")
+cat("  Cores for draw parallelism:", N_CORES, "\n")
 
 load(file.path(PROC_DATA, "b2b_selected_sample.RData"))
 b2b <- df_b2b_selected_sample %>% filter(year %in% YEARS)
@@ -143,11 +136,57 @@ imports <- firm_year_total_imports %>%
   filter(year %in% YEARS) %>%
   select(vat, year, total_imports)
 rm(firm_year_total_imports)
-cat("  Import firm-years:", nrow(imports), "\n\n")
+cat("  Import firm-years:", nrow(imports), "\n")
+
+load(file.path(PROC_DATA, "deployment_panel.RData"))
+
+nace_crf <- read.csv(
+  file.path(REPO_DIR, "preprocess", "crosswalks", "nace_crf_crosswalk.csv"),
+  stringsAsFactors = FALSE,
+  colClasses = c(nace2d = "character")
+) %>%
+  select(nace2d, crf_group)
+
+deploy_nace <- deployment_panel %>%
+  mutate(nace2d = make_nace2d(nace5d)) %>%
+  select(vat, nace2d, nace5d) %>%
+  distinct(vat, .keep_all = TRUE) %>%
+  left_join(nace_crf, by = "nace2d")
+rm(deployment_panel)
+
+cat("\n")
 
 
 # =============================================================================
-# SECTION 2: Helper functions
+# SECTION 2: NIR calibration targets (fixed across draws)
+# =============================================================================
+cat("── NIR calibration targets ──────────────────────────────────\n")
+
+load(file.path(PROC_DATA, "nir_calibration_targets.RData"))
+
+E_ETS_group <- eutl %>%
+  left_join(accounts %>% distinct(vat, year, nace2d), by = c("vat", "year")) %>%
+  left_join(nace_crf, by = "nace2d") %>%
+  filter(!is.na(crf_group), year %in% YEARS) %>%
+  group_by(crf_group, year) %>%
+  summarise(E_ETS = sum(emissions, na.rm = TRUE), .groups = "drop")
+
+E_deploy_panel <- nir_targets %>%
+  filter(year %in% YEARS) %>%
+  mutate(E_NIR = E_NIR_kt * 1000) %>%
+  left_join(E_ETS_group, by = c("crf_group", "year")) %>%
+  mutate(E_ETS    = coalesce(E_ETS, 0),
+         E_deploy = pmax(E_NIR - E_ETS, 0))
+
+n_floored <- sum(E_deploy_panel$E_NIR < E_deploy_panel$E_ETS, na.rm = TRUE)
+if (n_floored > 0)
+  cat("  WARNING:", n_floored, "group-years where E_ETS > E_NIR → floored to 0\n")
+
+cat("  E_deploy built:", nrow(E_deploy_panel), "group-years\n\n")
+
+
+# =============================================================================
+# SECTION 3: Helper functions
 # =============================================================================
 
 neumann_series <- function(A, epsilon) {
@@ -170,9 +209,9 @@ neumann_series <- function(A, epsilon) {
 
 
 # =============================================================================
-# SECTION 3: Main loop -- year outer, draw inner
+# SECTION 4: Main loop — year outer, draw inner
 # =============================================================================
-cat("-- Main loop: years x draws ----------------------------------------\n\n")
+cat("── Main loop: years × draws ─────────────────────────────────\n\n")
 
 conv_all <- list()
 t0_total <- Sys.time()
@@ -181,21 +220,20 @@ for (t in YEARS) {
   t0_year <- Sys.time()
   cat(sprintf("Year %d ", t))
 
-  # -- Load allocation for this year ------------------------------------------
-  alloc_path <- file.path(ALLOC_DIR, sprintf("alloc_%d.RData", t))
-  if (!file.exists(alloc_path)) {
-    cat("-- SKIPPED (allocation file not found)\n")
-    next
-  }
-  load(alloc_path)  # year_firms_by_draw, year_flags
-
-  # -- Slice data for year t --------------------------------------------------
+  # ── Slice data for year t ─────────────────────────────────────────────────
   b2b_t      <- b2b[b2b$year == t, ]
   eutl_t     <- eutl[eutl$year == t, ]
   accounts_t <- accounts[accounts$year == t, ]
   imports_t  <- imports[imports$year == t, ]
+  E_dep_t    <- E_deploy_panel[E_deploy_panel$year == t,
+                                c("crf_group", "E_deploy")]
 
-  # -- Build A matrix for year t (shared across all B draws) ------------------
+  proxy_t <- lapply(proxy_list, function(px) {
+    sub <- px[px$year == t, c("vat", "proxy")]
+    setNames(sub$proxy, sub$vat)
+  })
+
+  # ── Build A matrix for year t (shared across all B draws) ─────────────────
   all_vats <- sort(unique(c(b2b_t$vat_i_ano, b2b_t$vat_j_ano)))
   N        <- length(all_vats)
   vat_idx  <- setNames(seq_len(N), all_vats)
@@ -205,7 +243,7 @@ for (t in YEARS) {
     summarise(sales = sum(corr_sales_ij, na.rm = TRUE), .groups = "drop") %>%
     filter(sales > 0)
 
-  # -- Cost denominator: wage_bill + domestic B2B inputs + total imports -------
+  # ── Cost denominator: wage_bill + domestic B2B inputs + total imports ──────
   cost_vec <- rep(1e-6, N)
 
   b2b_rowsums <- b2b_agg %>%
@@ -248,18 +286,26 @@ for (t in YEARS) {
   if (max_rowsum >= 1)
     cat(sprintf("\n  WARNING year %d: max row sum of A = %.4f >= 1\n", t, max_rowsum))
 
-  # -- NACE sectors for each firm in all_vats (for upstream decomposition) ----
+  # ── NACE sectors for each firm in all_vats (for upstream decomposition) ────
   acc_match  <- match(all_vats, accounts_t$vat)
   nace2d_vec <- accounts_t$nace2d[acc_match]
   nace5d_vec <- accounts_t$nace5d[acc_match]
+  # nace{2,5}d_vec[i] = NA if firm i is not in accounts
 
-  # -- Draw loop (parallelised) -----------------------------------------------
+  # ── ETS emission intensities (fixed across draws) ─────────────────────────
+  eps_ets <- rep(0, N)
+  ets_idx <- match(eutl_t$vat, all_vats)
+  ok_ets  <- !is.na(ets_idx) & !is.na(eutl_t$emissions) & eutl_t$emissions > 0
+  eps_ets[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / cost_vec[ets_idx[ok_ets]]
+  ets_vats_t <- eutl_t$vat[ok_ets & !is.na(ets_idx)]
+
+  # ── Draw loop (parallelised) ──────────────────────────────────────────────
   cl <- makeCluster(N_CORES)
   registerDoParallel(cl)
   clusterEvalQ(cl, { library(dplyr); library(Matrix) })
-  clusterExport(cl, c("A", "cost_vec", "all_vats",
+  clusterExport(cl, c("A", "cost_vec", "eps_ets", "all_vats", "ets_vats_t",
                        "nace2d_vec", "nace5d_vec",
-                       "year_firms_by_draw",
+                       "proxy_t", "deploy_nace", "E_dep_t",
                        "neumann_series",
                        "NEUMANN_MAXIT", "NEUMANN_TOL"),
                 envir = environment())
@@ -267,26 +313,47 @@ for (t in YEARS) {
   draw_results <- foreach(b = seq_len(B),
                            .packages = c("dplyr", "Matrix")) %dopar% {
 
-    # Build emission intensity vector from allocation
-    alloc_b <- year_firms_by_draw[[b]]
-    eps_b   <- rep(0, length(all_vats))
-    alloc_idx <- match(alloc_b$vat, all_vats)
-    ok_alloc  <- !is.na(alloc_idx)
-    eps_b[alloc_idx[ok_alloc]] <- alloc_b$scope1[ok_alloc] /
-                                   cost_vec[alloc_idx[ok_alloc]]
+    proxy_b <- proxy_t[[b]]
 
-    # ETS flag
-    euets_vec <- rep(0L, length(all_vats))
-    euets_vec[alloc_idx[ok_alloc]] <- alloc_b$euets[ok_alloc]
+    deploy_b <- data.frame(
+      vat       = names(proxy_b),
+      proxy_avg = as.numeric(proxy_b),
+      stringsAsFactors = FALSE
+    ) %>%
+      filter(proxy_avg > 0) %>%
+      left_join(deploy_nace, by = "vat") %>%
+      filter(!is.na(crf_group)) %>%
+      left_join(E_dep_t, by = "crf_group") %>%
+      mutate(E_deploy = coalesce(E_deploy, 0)) %>%
+      group_by(crf_group) %>%
+      mutate(
+        sinh_sum    = sum(sinh(proxy_avg)),
+        w           = if_else(sinh_sum > 0, sinh(proxy_avg) / sinh_sum, 0),
+        emissions_b = E_deploy * w
+      ) %>%
+      ungroup() %>%
+      filter(emissions_b > 0)
 
-    # Neumann series: m ~ (I - A)^{-1} eps
+    # Full emission intensity vector: ETS (fixed) + imputed deployment
+    eps_b   <- eps_ets
+    imp_idx <- match(deploy_b$vat, all_vats)
+    ok_imp  <- !is.na(imp_idx)
+    eps_b[imp_idx[ok_imp]] <- eps_b[imp_idx[ok_imp]] +
+      deploy_b$emissions_b[ok_imp] / cost_vec[imp_idx[ok_imp]]
+
+    # Neumann series: m ≈ (I - A)^{-1} ε
     ns <- neumann_series(A, eps_b)
 
     # scope1 and upstream in levels (tonnes CO2)
     upstream_b <- pmax(cost_vec * (ns$m - eps_b), 0)
     scope1_b   <- cost_vec * eps_b
 
-    # -- Decompose upstream: across-sector vs within-sector --------------------
+    # ── Decompose upstream: across-sector vs within-sector ──────────────────
+    # For each granularity (NACE 2d, 5d):
+    #   m_bar[j] = mean(m[firms in same sector as j])
+    #   upstream_across = cost × A %*% m_bar
+    #   upstream_within = upstream - upstream_across
+    # For firms without a known sector, m_bar[j] = m[j] (no decomposition).
     m_vec <- ns$m
 
     # NACE 2-digit decomposition
@@ -320,7 +387,7 @@ for (t in YEARS) {
       upstream_within_5d = upstream_within_5d_b,
       stringsAsFactors   = FALSE
     )
-    firms_b$euets <- euets_vec
+    firms_b$euets <- as.integer(firms_b$vat %in% ets_vats_t)
     firms_b <- firms_b[firms_b$scope1 > 0 | firms_b$upstream > 0, ]
 
     list(
@@ -355,7 +422,6 @@ for (t in YEARS) {
   elapsed <- round(difftime(Sys.time(), t0_year, units = "secs"), 1)
   n_firms_avg <- round(mean(sapply(firms_by_draw, nrow)))
   cat(sprintf("(%s s | ~%d firms/draw)\n", elapsed, n_firms_avg))
-  rm(year_firms_by_draw, year_flags)
   gc()
 }
 
@@ -364,7 +430,7 @@ cat(sprintf("\nAll years complete in %.1f min\n\n", total_time))
 
 
 # =============================================================================
-# SECTION 4: Convergence summary
+# SECTION 5: Convergence summary
 # =============================================================================
 conv_summary <- bind_rows(conv_all) %>%
   group_by(year) %>%
@@ -376,15 +442,15 @@ conv_summary <- bind_rows(conv_all) %>%
     .groups    = "drop"
   )
 
-cat("-- Neumann convergence ----------------------------------------------\n")
+cat("── Neumann convergence ──────────────────────────────────────\n")
 print(conv_summary)
 
 # Save convergence summary alongside year files
 save(conv_summary, file = file.path(OUT_DIR, "conv_summary.RData"))
 
-cat(sprintf("\n===================================================================\n"))
+cat(sprintf("\n══════════════════════════════════════════════════════════════\n"))
 cat("Saved:", OUT_DIR, "\n")
 cat("  ", length(YEARS), "year files (firms_YYYY.RData)\n")
 cat("  conv_summary.RData\n")
 cat("  Total time:", total_time, "min\n")
-cat("===================================================================\n")
+cat("══════════════════════════════════════════════════════════════\n")

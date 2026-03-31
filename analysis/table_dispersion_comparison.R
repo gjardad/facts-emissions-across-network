@@ -1,28 +1,51 @@
 ###############################################################################
-# analysis/table_dispersion_comparison.R
+# analysis/table_dispersion_comparison_v2.R
 #
 # PURPOSE
-#   Produce comparison tables: ETS-only vs. literature vs. full-sample
-#   carbon productivity dispersion.
+#   Compare within-sector carbon productivity dispersion:
+#     - Belgium ETS-only (directly observed)
+#     - Belgium all firms (observed + Pareto-imputed)
+#     - Lyubich et al. (2018) — US plants, 6-digit NAICS
+#     - De Lyon & Dechezlepretre (2025) — EU firms (20+ emp), 3-4 digit NACE
+#
+# INPUT
+#   {PROC_DATA}/firm_year_belgian_euets.RData
+#   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
+#   {PROC_DATA}/b_loop_scope1_dispersion_pareto.RData
+#     (from b_loop_scope1_dispersion_v2.R)
 #
 # OUTPUT
-#   Console output + CSV files for downstream formatting
+#   {OUT_DIR}/dispersion_overview.tex          (Panel: ETS / literature / all)
+#   {OUT_DIR}/dispersion_by_sector.tex         (Sector-by-sector ETS vs full)
+#   {OUT_DIR}/dispersion_comparison_overview.csv
+#   {OUT_DIR}/dispersion_ets_vs_full_2d.csv
+#   {OUT_DIR}/dispersion_ets_vs_full_5d.csv
+#
+# RUNS ON: local
 ###############################################################################
 
-library(dplyr, warn.conflicts = FALSE)
-library(tidyr, warn.conflicts = FALSE)
-
-DATA_DIR  <- "C:/Users/jota_/Documents/NBB_data/processed"
-REPO_DIR  <- "C:/Users/jota_/Documents/facts-emissions-across-network"
-OUT_DIR   <- file.path(REPO_DIR, "output", "tables")
-if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
-
+# -- Paths --------------------------------------------------------------------
+if (tolower(Sys.info()[["user"]]) == "jardang") {
+  REPO_DIR <- "C:/Users/jardang/Documents/facts-emissions-across-network"
+} else if (tolower(Sys.info()[["user"]]) == "jota_") {
+  REPO_DIR <- tryCatch(dirname(normalizePath(sys.frame(1)$ofile, winslash = "/")),
+                        error = function(e) normalizePath(getwd(), winslash = "/"))
+  while (!file.exists(file.path(REPO_DIR, "paths.R"))) REPO_DIR <- dirname(REPO_DIR)
+} else {
+  stop("Define REPO_DIR for this user.")
+}
+source(file.path(REPO_DIR, "paths.R"))
 source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
+
+library(dplyr, warn.conflicts = FALSE)
+
+OUT_DIR <- file.path(REPO_DIR, "output", "tables")
+if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
 
 MIN_N <- 3L
 YEARS <- 2005:2021
 
-# ── Helper ──────────────────────────────────────────────────────────────────
+# -- Helpers ------------------------------------------------------------------
 pct_ratio <- function(x, p_hi, p_lo) {
   x <- x[!is.na(x) & x > 0]
   if (length(x) < 2) return(NA_real_)
@@ -41,18 +64,25 @@ do_stats <- function(df) {
   )
 }
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PART A: ETS-only dispersion
-# ═══════════════════════════════════════════════════════════════════════════
-cat("── Loading data ──\n")
+fmt  <- function(x, digits = 2) {
+  ifelse(is.na(x), "---", formatC(round(x, digits), format = "f", digits = digits))
+}
+fmt1 <- function(x) fmt(x, 1)
+fmt0 <- function(x) ifelse(is.na(x), "---", as.character(round(x, 0)))
 
-load(file.path(DATA_DIR, "firm_year_belgian_euets.RData"))
+
+# =============================================================================
+# PART A: ETS-only dispersion (directly from EUTL microdata)
+# =============================================================================
+cat("-- Loading data ------------------------------------------------------\n")
+
+load(file.path(PROC_DATA, "firm_year_belgian_euets.RData"))
 eutl <- firm_year_belgian_euets %>%
   filter(year %in% YEARS, !is.na(emissions), emissions > 0) %>%
   select(vat, year, emissions)
 rm(firm_year_belgian_euets)
 
-load(file.path(DATA_DIR, "annual_accounts_selected_sample_key_variables.RData"))
+load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData"))
 accounts <- df_annual_accounts_selected_sample_key_variables %>%
   filter(year %in% YEARS) %>%
   select(vat, year, nace5d, revenue) %>%
@@ -65,7 +95,7 @@ ets <- eutl %>%
   filter(revenue > 0, nace2d >= "10", nace2d <= "33") %>%
   mutate(cp = revenue / emissions)
 
-# ETS 2-digit
+# ETS 2-digit: average across years per sector
 ets_2d <- ets %>%
   group_by(nace2d, year) %>%
   filter(n() >= MIN_N) %>%
@@ -77,11 +107,10 @@ ets_2d <- ets %>%
     ets_n_firms_avg = round(mean(n_firms), 0),
     ets_p90p10      = mean(cp_p90p10, na.rm = TRUE),
     ets_log9010     = mean(cp_log_9010, na.rm = TRUE),
-    ets_var_log     = mean(cp_var_log, na.rm = TRUE),
     .groups = "drop"
   )
 
-# ETS 5-digit
+# ETS 5-digit: aggregated to 2-digit parent
 ets_5d <- ets %>%
   group_by(nace5d, year) %>%
   filter(n() >= MIN_N) %>%
@@ -90,92 +119,68 @@ ets_5d <- ets %>%
   mutate(nace2d = substr(nace5d, 1, 2)) %>%
   group_by(nace2d) %>%
   summarise(
-    ets5d_n_sectors  = n_distinct(nace5d),
-    ets5d_p90p10     = mean(cp_p90p10, na.rm = TRUE),
-    ets5d_log9010    = mean(cp_log_9010, na.rm = TRUE),
-    ets5d_var_log    = mean(cp_var_log, na.rm = TRUE),
+    ets5d_n_sectors = n_distinct(nace5d),
+    ets5d_log9010   = mean(cp_log_9010, na.rm = TRUE),
     .groups = "drop"
   )
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PART B: Full-sample dispersion (from Pareto loop output)
-# ═══════════════════════════════════════════════════════════════════════════
-cat("── Loading Pareto loop results ──\n")
+# =============================================================================
+# PART B: Full-sample dispersion (from scope 1 dispersion output)
+# =============================================================================
+cat("-- Loading scope 1 dispersion results --------------------------------\n")
 
-all_2d <- list()
-all_5d <- list()
-for (yr in YEARS) {
-  f <- file.path(DATA_DIR, sprintf("b_loop_pareto_year_%d.RData", yr))
-  if (file.exists(f)) {
-    load(f)
-    all_2d[[as.character(yr)]] <- year_stats2d
-    all_5d[[as.character(yr)]] <- year_stats5d
-  }
-}
-full_2d_raw <- bind_rows(all_2d)
-full_5d_raw <- bind_rows(all_5d)
+load(file.path(PROC_DATA, "b_loop_scope1_dispersion_pareto.RData"))
+# all_stats2d, all_stats5d (draw-level)
 
 # Full 2-digit: average across draws, then across years
-full_2d <- full_2d_raw %>%
+full_2d <- all_stats2d %>%
   filter(nace2d >= "10", nace2d <= "33") %>%
   group_by(nace2d, year) %>%
   summarise(
     n_firms     = mean(n_firms),
     cp_p90p10   = mean(cp_p90p10, na.rm = TRUE),
     cp_log_9010 = mean(cp_p9010_log, na.rm = TRUE),
-    cp_var_log  = mean(cp_var_log, na.rm = TRUE),
     .groups     = "drop"
   ) %>%
   group_by(nace2d) %>%
   summarise(
-    full_n_years     = n(),
     full_n_firms_avg = round(mean(n_firms), 0),
     full_p90p10      = mean(cp_p90p10, na.rm = TRUE),
     full_log9010     = mean(cp_log_9010, na.rm = TRUE),
-    full_var_log     = mean(cp_var_log, na.rm = TRUE),
     .groups = "drop"
   )
 
-# Full 5-digit: average across draws, then across sector-years, grouped by 2d parent
-full_5d <- full_5d_raw %>%
+# Full 5-digit: aggregated to 2-digit parent
+full_5d <- all_stats5d %>%
   mutate(nace2d = substr(nace5d, 1, 2)) %>%
   filter(nace2d >= "10", nace2d <= "33") %>%
   group_by(nace5d, year) %>%
   summarise(
-    cp_p90p10   = mean(cp_p90p10, na.rm = TRUE),
     cp_log_9010 = mean(cp_p9010_log, na.rm = TRUE),
-    cp_var_log  = mean(cp_var_log, na.rm = TRUE),
     .groups     = "drop"
   ) %>%
   mutate(nace2d = substr(nace5d, 1, 2)) %>%
   group_by(nace2d) %>%
   summarise(
     full5d_n_sectors = n_distinct(nace5d),
-    full5d_p90p10    = mean(cp_p90p10, na.rm = TRUE),
     full5d_log9010   = mean(cp_log_9010, na.rm = TRUE),
-    full5d_var_log   = mean(cp_var_log, na.rm = TRUE),
     .groups = "drop"
   )
 
+rm(all_stats2d, all_stats5d, stats2d_summary, stats5d_summary)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TABLE 1: Overall summary — Belgium vs. Literature
-# ═══════════════════════════════════════════════════════════════════════════
 
-# Compute unweighted means across sectors
-ets_2d_overall  <- c(p90p10 = mean(ets_2d$ets_p90p10, na.rm = TRUE),
-                     log9010 = mean(ets_2d$ets_log9010, na.rm = TRUE),
-                     var_log = mean(ets_2d$ets_var_log, na.rm = TRUE))
-ets_5d_overall  <- c(p90p10 = mean(ets_5d$ets5d_p90p10, na.rm = TRUE),
-                     log9010 = mean(ets_5d$ets5d_log9010, na.rm = TRUE),
-                     var_log = mean(ets_5d$ets5d_var_log, na.rm = TRUE))
-full_2d_overall <- c(p90p10 = mean(full_2d$full_p90p10, na.rm = TRUE),
-                     log9010 = mean(full_2d$full_log9010, na.rm = TRUE),
-                     var_log = mean(full_2d$full_var_log, na.rm = TRUE))
-full_5d_overall <- c(p90p10 = mean(full_5d$full5d_p90p10, na.rm = TRUE),
-                     log9010 = mean(full_5d$full5d_log9010, na.rm = TRUE),
-                     var_log = mean(full_5d$full5d_var_log, na.rm = TRUE))
+# =============================================================================
+# TABLE 1 (CSV): Overall summary -- Belgium vs. Literature
+# =============================================================================
+
+ets_2d_mean  <- c(p90p10  = mean(ets_2d$ets_p90p10, na.rm = TRUE),
+                  log9010 = mean(ets_2d$ets_log9010, na.rm = TRUE))
+ets_5d_mean  <- c(log9010 = mean(ets_5d$ets5d_log9010, na.rm = TRUE))
+full_2d_mean <- c(p90p10  = mean(full_2d$full_p90p10, na.rm = TRUE),
+                  log9010 = mean(full_2d$full_log9010, na.rm = TRUE))
+full_5d_mean <- c(log9010 = mean(full_5d$full5d_log9010, na.rm = TRUE))
 
 tab1 <- data.frame(
   Source = c(
@@ -193,44 +198,94 @@ tab1 <- data.frame(
                   "2-digit", "5-digit"),
   Unit = c("firm", "firm", "", "plant", "firm (20+ emp.)", "", "firm", "firm"),
   p90_p10 = c(
-    round(ets_2d_overall["p90p10"], 1),
-    round(ets_5d_overall["p90p10"], 1),
+    round(ets_2d_mean["p90p10"], 1),
     NA,
-    9.7,   # exp(2.27)
-    24,    # all-country average
     NA,
-    round(full_2d_overall["p90p10"], 1),
-    round(full_5d_overall["p90p10"], 1)
+    9.7,
+    24,
+    NA,
+    round(full_2d_mean["p90p10"], 1),
+    NA
   ),
   log_9010 = c(
-    round(ets_2d_overall["log9010"], 2),
-    round(ets_5d_overall["log9010"], 2),
+    round(ets_2d_mean["log9010"], 2),
+    round(ets_5d_mean["log9010"], 2),
     NA,
     2.27,
-    3.18,  # log(24)
+    3.18,
     NA,
-    round(full_2d_overall["log9010"], 2),
-    round(full_5d_overall["log9010"], 2)
+    round(full_2d_mean["log9010"], 2),
+    round(full_5d_mean["log9010"], 2)
   ),
   stringsAsFactors = FALSE
 )
 
 cat("\n")
-cat("══════════════════════════════════════════════════════════════════════\n")
-cat("  TABLE 1: Carbon Productivity Dispersion — Belgium vs. Literature\n")
+cat("======================================================================\n")
+cat("  TABLE 1: Carbon Productivity Dispersion -- Belgium vs. Literature\n")
 cat("  Manufacturing sectors only. Mean across sector-years.\n")
-cat("══════════════════════════════════════════════════════════════════════\n\n")
+cat("======================================================================\n\n")
 print(tab1, row.names = FALSE, right = FALSE, na.print = "")
 write.csv(tab1, file.path(OUT_DIR, "dispersion_comparison_overview.csv"),
           row.names = FALSE, na = "")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TABLE 2: Sector-by-sector — ETS-only vs. Full sample (NACE 2-digit)
-# ═══════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# TABLE 1 (LaTeX): dispersion_overview.tex
+# =============================================================================
 
-# NACE 2-digit labels
+tex1 <- c(
+  "\\begin{tabular}{l l l cc}",
+  "\\toprule",
+  " & Granularity & Unit & $p_{90}/p_{10}$ & $\\ln p_{90} - \\ln p_{10}$ \\\\",
+  "\\midrule",
+  "\\addlinespace[2pt]",
+  "\\multicolumn{5}{l}{\\textit{Panel A: Observed emissions (ETS firms only)}} \\\\",
+  "\\addlinespace[2pt]",
+  sprintf("Belgium & NACE 2-digit & Firm & %s & %s \\\\",
+          fmt1(ets_2d_mean["p90p10"]), fmt(ets_2d_mean["log9010"])),
+  sprintf("Belgium & NACE 5-digit & Firm & --- & %s \\\\",
+          fmt(ets_5d_mean["log9010"])),
+  "\\addlinespace[6pt]",
+  "\\multicolumn{5}{l}{\\textit{Panel B: Literature benchmarks}} \\\\",
+  "\\addlinespace[2pt]",
+  "Lyubich et al.\\ (2018) & 6-digit NAICS & Plant & 9.7 & 2.27 \\\\",
+  "De Lyon \\& Dechezlepr\\^{e}tre (2025) & 3--4 digit NACE & Firm ($\\geq$20 emp.) & 24.0 & 3.18 \\\\",
+  "\\addlinespace[6pt]",
+  "\\multicolumn{5}{l}{\\textit{Panel C: Observed + imputed emissions (all firms)}} \\\\",
+  "\\addlinespace[2pt]",
+  sprintf("Belgium & NACE 2-digit & Firm & %s & %s \\\\",
+          fmt1(full_2d_mean["p90p10"]), fmt(full_2d_mean["log9010"])),
+  sprintf("Belgium & NACE 5-digit & Firm & --- & %s \\\\",
+          fmt(full_5d_mean["log9010"])),
+  "\\bottomrule",
+  "\\end{tabular}"
+)
+
+writeLines(tex1, file.path(OUT_DIR, "dispersion_overview.tex"))
+cat("-- Wrote dispersion_overview.tex\n")
+
+
+# =============================================================================
+# TABLE 2 (CSV + LaTeX): Sector-by-sector, ETS vs full (NACE 2-digit)
+# =============================================================================
+
 nace2d_labels <- c(
+  "10" = "Food products", "11" = "Beverages", "12" = "Tobacco",
+  "13" = "Textiles", "14" = "Wearing apparel", "15" = "Leather",
+  "16" = "Wood products", "17/18" = "Paper \\& printing",
+  "19" = "Coke \\& refined petroleum",
+  "20" = "Chemicals", "21" = "Pharmaceuticals",
+  "22" = "Rubber \\& plastics", "23" = "Non-metallic minerals",
+  "24" = "Basic metals", "25" = "Fabricated metals",
+  "26" = "Computer \\& electronics", "27" = "Electrical equipment",
+  "28" = "Machinery n.e.c.", "29" = "Motor vehicles",
+  "30" = "Other transport eq.", "31" = "Furniture",
+  "32" = "Other manufacturing", "33" = "Repair \\& installation"
+)
+
+# Plain-text labels for CSV
+nace2d_labels_csv <- c(
   "10" = "Food", "11" = "Beverages", "12" = "Tobacco",
   "13" = "Textiles", "14" = "Wearing apparel", "15" = "Leather",
   "16" = "Wood", "17/18" = "Paper & printing", "19" = "Coke & petroleum",
@@ -243,10 +298,11 @@ nace2d_labels <- c(
   "33" = "Repair & installation"
 )
 
-tab2 <- full_2d %>%
+# -- CSV table ----------------------------------------------------------------
+tab2_csv <- full_2d %>%
   left_join(ets_2d, by = "nace2d") %>%
   mutate(
-    label = nace2d_labels[nace2d],
+    label = nace2d_labels_csv[nace2d],
     inflation_p90p10 = full_p90p10 / ets_p90p10,
     inflation_log    = full_log9010 / ets_log9010
   ) %>%
@@ -265,25 +321,74 @@ tab2 <- full_2d %>%
   arrange(NACE)
 
 cat("\n")
-cat("══════════════════════════════════════════════════════════════════════\n")
-cat("  TABLE 2: ETS-only vs. Full Sample — NACE 2-digit\n")
-cat("  Carbon productivity p90/p10 and 90-10 log diff.\n")
-cat("  Averaged across years. ETS_n = avg firms/year in ETS.\n")
-cat("══════════════════════════════════════════════════════════════════════\n\n")
-
-print(tab2, row.names = FALSE, right = FALSE, na.print = "—")
-write.csv(tab2, file.path(OUT_DIR, "dispersion_ets_vs_full_2d.csv"),
+cat("======================================================================\n")
+cat("  TABLE 2: ETS-only vs. Full Sample -- NACE 2-digit\n")
+cat("======================================================================\n\n")
+print(tab2_csv, row.names = FALSE, right = FALSE, na.print = "---")
+write.csv(tab2_csv, file.path(OUT_DIR, "dispersion_ets_vs_full_2d.csv"),
           row.names = FALSE, na = "")
 
+# -- LaTeX table --------------------------------------------------------------
+tab_data <- full_2d %>%
+  left_join(ets_2d, by = "nace2d") %>%
+  left_join(ets_5d, by = "nace2d") %>%
+  left_join(full_5d, by = "nace2d") %>%
+  mutate(label = nace2d_labels[nace2d]) %>%
+  arrange(nace2d)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TABLE 3: Same comparison at NACE 5-digit (grouped by 2-digit parent)
-# ═══════════════════════════════════════════════════════════════════════════
+tex2 <- c(
+  "\\begin{tabular}{l r r cc cc}",
+  "\\toprule",
+  " & & & \\multicolumn{2}{c}{ETS only} & \\multicolumn{2}{c}{All firms} \\\\",
+  "\\cmidrule(lr){4-5} \\cmidrule(lr){6-7}",
+  " & $\\bar{N}_{\\text{ETS}}$ & $\\bar{N}_{\\text{all}}$ & 2-digit & 5-digit & 2-digit & 5-digit \\\\",
+  "\\midrule"
+)
+
+for (i in seq_len(nrow(tab_data))) {
+  r <- tab_data[i, ]
+  tex2 <- c(tex2, sprintf(
+    "%s & %s & %s & %s & %s & %s & %s \\\\",
+    r$label,
+    fmt0(r$ets_n_firms_avg),
+    fmt0(r$full_n_firms_avg),
+    fmt(r$ets_log9010),
+    fmt(r$ets5d_log9010),
+    fmt(r$full_log9010),
+    fmt(r$full5d_log9010)
+  ))
+}
+
+tex2 <- c(tex2,
+  "\\midrule",
+  sprintf(
+    "Mean & & & %s & %s & %s & %s \\\\",
+    fmt(mean(tab_data$ets_log9010, na.rm = TRUE)),
+    fmt(mean(tab_data$ets5d_log9010, na.rm = TRUE)),
+    fmt(mean(tab_data$full_log9010, na.rm = TRUE)),
+    fmt(mean(tab_data$full5d_log9010, na.rm = TRUE))
+  ),
+  "\\addlinespace[3pt]",
+  "\\multicolumn{7}{l}{\\textit{Literature benchmarks}} \\\\",
+  "\\addlinespace[2pt]",
+  "Lyubich et al.\\ (2018) & & & & 2.27 & & \\\\",
+  "De Lyon \\& Dechezlepr\\^{e}tre (2025) & & & 3.18 & & & \\\\",
+  "\\bottomrule",
+  "\\end{tabular}"
+)
+
+writeLines(tex2, file.path(OUT_DIR, "dispersion_by_sector.tex"))
+cat("-- Wrote dispersion_by_sector.tex\n")
+
+
+# =============================================================================
+# TABLE 3 (CSV): NACE 5-digit comparison
+# =============================================================================
 
 tab3 <- full_5d %>%
   left_join(ets_5d, by = "nace2d") %>%
   mutate(
-    label = nace2d_labels[nace2d],
+    label = nace2d_labels_csv[nace2d],
     inflation_log = full5d_log9010 / ets5d_log9010
   ) %>%
   transmute(
@@ -298,13 +403,11 @@ tab3 <- full_5d %>%
   arrange(NACE)
 
 cat("\n")
-cat("══════════════════════════════════════════════════════════════════════\n")
-cat("  TABLE 3: ETS-only vs. Full Sample — NACE 5-digit\n")
-cat("  Mean of within-5d-sector 90-10 log diff, by 2-digit parent.\n")
-cat("══════════════════════════════════════════════════════════════════════\n\n")
-
-print(tab3, row.names = FALSE, right = FALSE, na.print = "—")
+cat("======================================================================\n")
+cat("  TABLE 3: ETS-only vs. Full Sample -- NACE 5-digit\n")
+cat("======================================================================\n\n")
+print(tab3, row.names = FALSE, right = FALSE, na.print = "---")
 write.csv(tab3, file.path(OUT_DIR, "dispersion_ets_vs_full_5d.csv"),
           row.names = FALSE, na = "")
 
-cat("\n── Done. CSVs saved to", OUT_DIR, "──\n")
+cat("\n-- Done. Tables saved to", OUT_DIR, "--\n")
