@@ -362,13 +362,50 @@ The EN proxy is the best ranking signal: lowest nRMSE (0.848), highest Pearson (
 
 ### 7.2 Redistribution method comparison (EN proxy only)
 
-| Method | p90/p10 bias | p90/p10 RMSE | Gini RMSE | Pearson | Spearman | RMSE (levels) |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Sinh-calibrated | +412 | 850 | 0.24 | 0.849 | 0.512 | 625,229 |
-| Quantile mapping | −41 | 90 | 0.19 | 0.849 | 0.694 | 510,110 |
-| Pareto (GPA) | −26 | 86 | 0.20 | 0.850 | 0.700 | 514,079 |
+200 repeats, K=5 sector-level CV. All methods use the EN proxy for ranking; they differ in how they convert ranks to within-sector emission shares. Source: `inferring_emissions/analysis/active/diagnostic_redistribution_comparison.R`.
 
-Both alternatives reduce distributional bias by ~10× relative to sinh. Pareto has a slight edge and is our preferred method. Quantile mapping results are available for robustness.
+**Distributional bias** (imputed − actual, mean across eligible sector-year cells; SE across 200 repeats):
+
+| Method | p90/p10 | log gap | Gini | τ₃ (L-skew) | τ₄ (L-kurt) |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Sinh-calibrated | +554.3 (95.9) | +1.657 (0.031) | +0.179 (0.003) | −0.006 (0.002) | +0.016 (0.001) |
+| Quantile mapping | −42.0 (0.3) | −0.275 (0.012) | +0.038 (0.002) | −0.102 (0.002) | +0.092 (0.001) |
+| **GPA** | **−27.3 (0.3)** | +0.236 (0.010) | −0.065 (0.001) | −0.117 (0.001) | −0.139 (0.000) |
+| GEV | −34.8 (0.3) | +0.020 (0.009) | −0.026 (0.002) | −0.114 (0.001) | −0.022 (0.000) |
+| GLO | −40.0 (0.2) | −0.164 (0.009) | +0.001 (0.002) | −0.114 (0.001) | +0.037 (0.000) |
+| Log-normal | +402.3 (94.5) | +1.223 (0.038) | +0.130 (0.004) | −0.041 (0.003) | +0.007 (0.001) |
+
+**Distributional RMSE** (root mean square error across cells):
+
+| Method | p90/p10 | log gap | Gini | τ₃ | τ₄ |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Sinh-calibrated | 1448.6 (387.9) | 2.350 (0.024) | 0.239 (0.002) | 0.187 (0.002) | 0.120 (0.001) |
+| Quantile mapping | 90.3 (0.1) | 1.590 (0.009) | 0.194 (0.002) | 0.183 (0.001) | 0.125 (0.001) |
+| **GPA** | **86.3 (0.2)** | 1.551 (0.008) | 0.201 (0.001) | 0.189 (0.001) | 0.161 (0.000) |
+| GEV | 87.4 (0.1) | **1.512 (0.007)** | 0.194 (0.001) | 0.187 (0.001) | **0.084 (0.000)** |
+| GLO | 88.8 (0.1) | 1.514 (0.007) | **0.191 (0.002)** | **0.186 (0.001)** | 0.089 (0.000) |
+| Log-normal | 1197.6 (386.8) | 1.987 (0.032) | 0.196 (0.003) | 0.164 (0.002) | 0.109 (0.001) |
+
+**Firm-level metrics** (emitters only):
+
+| Method | Pearson | Spearman | RMSE (levels) |
+|---|:-:|:-:|:-:|
+| Sinh-calibrated | 0.848 (0.001) | 0.498 (0.006) | 634,715 (3,457) |
+| Quantile mapping | 0.850 (0.001) | 0.694 (0.001) | 508,630 (2,142) |
+| **GPA** | 0.852 (0.001) | 0.700 (0.001) | 510,848 (1,325) |
+| GEV | 0.869 (0.001) | 0.701 (0.001) | 483,878 (1,740) |
+| GLO | 0.874 (0.001) | 0.698 (0.001) | 475,456 (2,267) |
+| Log-normal | 0.840 (0.002) | 0.654 (0.008) | 548,891 (4,697) |
+
+**Key findings:**
+
+1. Sinh-calibrated and log-normal are dominated: they have 10–15× larger p90/p10 bias and RMSE than the other four methods, and lower Spearman correlations.
+
+2. **GPA has the lowest p90/p10 bias (−27.3) and RMSE (86.3)**, which is the metric most directly relevant to our dispersion analysis. This is why we use GPA.
+
+3. **GEV and GLO have lower RMSE on other metrics**: GEV has the lowest log gap RMSE (1.512) and τ₄ RMSE (0.084); GLO has the lowest Gini RMSE (0.191) and τ₃ RMSE (0.186). Both also achieve higher Pearson (0.87) and lower firm-level RMSE (~475–484k vs. 511k for GPA).
+
+4. **Potential trade-off to revisit**: If the analysis shifts to emphasizing log gap or Gini over p90/p10, or if firm-level accuracy becomes important (e.g., for upstream emission propagation), GEV or GLO may be preferred. For now, we keep GPA because p90/p10 is our primary dispersion measure and GPA minimizes its error.
 
 ### 7.3 Spearman improvement is real, not a bug
 
