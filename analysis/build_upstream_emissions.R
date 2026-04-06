@@ -20,14 +20,14 @@
 #     5. Save firm-level results per year
 #
 # INPUT
-#   {PROC_DATA}/allocation_pareto/alloc_YYYY.RData  (from b_allocation_pareto.R)
+#   {PROC_DATA}/allocation_{method}/alloc_YYYY.RData  (from b_allocation_{method}.R)
 #   {PROC_DATA}/b2b_selected_sample.RData
 #   {PROC_DATA}/firm_year_belgian_euets.RData
 #   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
 #   {PROC_DATA}/firm_year_total_imports.RData
 #
 # OUTPUT
-#   {PROC_DATA}/upstream_emissions/firms_YYYY.RData  (one file per year)
+#   {PROC_DATA}/upstream_emissions_{method}/firms_YYYY.RData  (one file per year)
 #     firms_by_draw : list of B data.frames, each with columns
 #                     (vat, scope1, upstream, upstream_across_2d,
 #                      upstream_within_2d, upstream_across_5d,
@@ -62,6 +62,7 @@ library(foreach)
 YEARS         <- 2005:2021
 NEUMANN_MAXIT <- 50L
 NEUMANN_TOL   <- 1e-8
+ALLOC_METHOD  <- "proportional"  # "pareto" or "proportional"
 
 # EU ETS annual average carbon price (EUR / tonne CO2), 2005-2022.
 # Source: ICAP Allowance Price Explorer, secondary market daily prices.
@@ -79,12 +80,13 @@ N_CORES_SET <- if (tolower(Sys.info()[["user"]]) == "jardang") {
   max(1L, parallel::detectCores(logical = FALSE) - 2L)
 }
 
-ALLOC_DIR <- file.path(PROC_DATA, "allocation_pareto")
-OUT_DIR   <- file.path(PROC_DATA, "upstream_emissions")
+ALLOC_DIR <- file.path(PROC_DATA, paste0("allocation_", ALLOC_METHOD))
+OUT_DIR   <- file.path(PROC_DATA, paste0("upstream_emissions_", ALLOC_METHOD))
 if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
 
 cat("===================================================================\n")
 cat("  BUILD UPSTREAM EMISSIONS: A matrix + Neumann per year x draw\n")
+cat("  Allocation method:", ALLOC_METHOD, "\n")
 cat("  Years:", min(YEARS), "--", max(YEARS),
     "| Neumann tol:", NEUMANN_TOL, "| max iter:", NEUMANN_MAXIT, "\n")
 cat("===================================================================\n\n")

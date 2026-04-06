@@ -49,13 +49,24 @@ source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 library(dplyr)
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-YEARS       <- 2005:2021
-MIN_N_STATS <- 3L
+YEARS        <- 2005:2021
+MIN_N_STATS  <- 3L
+ALLOC_METHOD <- "proportional"  # "pareto" or "proportional"
 
-UP_DIR <- file.path(PROC_DATA, "upstream_emissions")
+# Backward compat: fall back to unsuffixed upstream_emissions/ if suffixed dir
+# does not exist yet (i.e. build_upstream_emissions.R hasn't been re-run)
+UP_DIR <- file.path(PROC_DATA, paste0("upstream_emissions_", ALLOC_METHOD))
+if (!dir.exists(UP_DIR) && ALLOC_METHOD == "pareto") {
+  UP_DIR_LEGACY <- file.path(PROC_DATA, "upstream_emissions")
+  if (dir.exists(UP_DIR_LEGACY)) {
+    cat("  NOTE: using legacy upstream_emissions/ (no method suffix)\n")
+    UP_DIR <- UP_DIR_LEGACY
+  }
+}
 
 cat("═══════════════════════════════════════════════════════════════\n")
 cat("  RQ2: UPSTREAM CARBON PRODUCTIVITY DISPERSION + DECOMPOSITION\n")
+cat("  Allocation method:", ALLOC_METHOD, "\n")
 cat("  Years:", min(YEARS), "–", max(YEARS), "\n")
 cat("═══════════════════════════════════════════════════════════════\n\n")
 
@@ -286,7 +297,7 @@ cat("  NACE 5-digit:", nrow(stats5d_summary), "sector-years\n\n")
 # =============================================================================
 # SECTION 5: Save
 # =============================================================================
-OUT_PATH <- file.path(PROC_DATA, "b_loop_upstream_dispersion.RData")
+OUT_PATH <- file.path(PROC_DATA, paste0("b_loop_upstream_dispersion_", ALLOC_METHOD, ".RData"))
 
 save(
   stats2d_summary,

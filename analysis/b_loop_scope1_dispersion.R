@@ -39,13 +39,15 @@ source(file.path(REPO_DIR, "utils", "sector_conventions.R"))
 library(dplyr)
 
 # -- Parameters ---------------------------------------------------------------
-YEARS       <- 2005:2021
-MIN_N_STATS <- 3L
+YEARS        <- 2005:2021
+MIN_N_STATS  <- 3L
+ALLOC_METHOD <- "proportional"  # "pareto" or "proportional"
 
-ALLOC_DIR <- file.path(PROC_DATA, "allocation_pareto")
+ALLOC_DIR <- file.path(PROC_DATA, paste0("allocation_", ALLOC_METHOD))
 
 cat("===================================================================\n")
 cat("  RQ1: SCOPE 1 CARBON PRODUCTIVITY DISPERSION\n")
+cat("  Allocation method:", ALLOC_METHOD, "\n")
 cat("  Years:", min(YEARS), "--", max(YEARS), "\n")
 cat("===================================================================\n\n")
 
@@ -203,7 +205,7 @@ cat("  NACE 5-digit:", nrow(stats5d_summary), "sector-years\n\n")
 # =============================================================================
 # SECTION 5: Save
 # =============================================================================
-OUT_PATH <- file.path(PROC_DATA, "b_loop_scope1_dispersion_pareto.RData")
+OUT_PATH <- file.path(PROC_DATA, paste0("b_loop_scope1_dispersion_", ALLOC_METHOD, ".RData"))
 
 save(
   stats2d_summary,
