@@ -2,7 +2,7 @@
 # analysis/run_subsampled_en.R
 #
 # PURPOSE
-#   Compute an averaged deployment proxy for non-ETS firms via B repeated
+#   Compute B deployment proxy vectors for non-ETS firms via repeated
 #   elastic net fits on stratified subsamples of the training sample.
 #
 #   For each draw b = 1, ..., B:
@@ -10,12 +10,10 @@
 #     2. Fit elastic net on the 80% subsample
 #     3. Apply supplier coefficients to ALL deployment firms (non-ETS, not in
 #        training sample)
-#   Average and record SD of proxy values across B draws.
 #
-#   Design closely follows inferring_emissions/analysis/active/
-#   build_repeated_cv_proxy_asinh.R, which runs M=200 K-fold CV to evaluate
-#   out-of-sample performance for training firms. This script instead computes
-#   the deployment proxy for the full population of non-ETS firms.
+#   The B proxy vectors are the primary output. Prediction intervals are
+#   constructed downstream by nesting K perturbations within each draw b
+#   (see analysis/uncertainty_propagation.R).
 #
 # SPECIFICATION
 #   LHS: asinh(emissions) [EU ETS verified, or 0 for confirmed-zero sectors]
@@ -31,11 +29,11 @@
 # OUTPUT
 #   {PROC_DATA}/deployment_firm_years.RData
 #     deployment_firm_years : data.frame (vat, year) defining the deployment grid
-#   {PROC_DATA}/deployment_proxy_avg.RData
-#     proxy_avg  : data.frame (vat, year, proxy_avg, proxy_sd) for all
-#                  deployment firm-years observed in B2B data
+#   {PROC_DATA}/deployment_proxy_list.RData
 #     proxy_list : list of length B, each a data.frame (vat, year, proxy)
-#                  for one subsample draw — used in uncertainty propagation
+#                  for one subsample draw
+#   {PROC_DATA}/deployment_draw_params.RData
+#     draw_params : list of length B, each containing gpa_params
 #
 # RUNS ON: RMD (requires b2b_selected_sample with deployment firm purchases)
 ###############################################################################
@@ -170,37 +168,6 @@ extract_suppliers <- function(fit, n_ctrl, eligible_sellers, s = "lambda.min") {
   ) %>%
     filter(coef != 0) %>%
     arrange(desc(abs(coef)))
-}
-
-# Mixed sectors: contain both emitters and confirmed non-emitters in training
-# NACE 17/18 combined (paper & printing), 19 (petroleum), 24 (iron & steel)
-MIXED_SECTORS <- c("17/18", "19", "24")
-
-# Youden-optimal percentile threshold for one sector
-# proxy_vals: proxy values for all firms in the sector (including zeros)
-# is_emit: logical, TRUE if firm is a true emitter
-# Returns: optimal percentile of positive proxy values
-youden_threshold_pct <- function(proxy_vals, is_emit, n_grid = 200) {
-  pos_vals <- proxy_vals[proxy_vals > 0]
-  if (sum(is_emit) < 3 || sum(!is_emit) < 3 || length(pos_vals) < 5) return(0)
-
-  pct_grid <- seq(0, 0.95, length.out = n_grid)
-  best_j   <- -Inf
-  best_pct <- 0
-
-  for (pct in pct_grid) {
-    tau <- quantile(pos_vals, probs = pct, names = FALSE)
-    pred_pos <- (proxy_vals > tau)
-    tp  <- sum(pred_pos & is_emit)
-    fp  <- sum(pred_pos & !is_emit)
-    fn  <- sum(!pred_pos & is_emit)
-    tn  <- sum(!pred_pos & !is_emit)
-    tpr <- tp / max(tp + fn, 1)
-    fpr <- fp / max(fp + tn, 1)
-    j   <- tpr - fpr
-    if (j > best_j) { best_j <- j; best_pct <- pct }
-  }
-  best_pct
 }
 
 # Stratified leave-(1-frac)-out subsample of training firms
@@ -341,77 +308,14 @@ run_one_subsample <- function(lhs, b2b_lhs, b2b_deploy,
     rename(vat = vat_j_ano) %>%
     mutate(proxy = pmax(proxy, 0))
 
-  # --- 5.9 Stage A: Inner-CV threshold (supplier-only OOS proxy) ------------
-  # For each inner fold k, fit EN on K-1 folds at lambda.min, extract supplier
-  # coefficients, and compute supplier-only proxy for fold k's mixed-sector
-  # firms via B2B data. These proxies are genuinely OOS w.r.t. the EN that
-  # produced them, mirroring deployment conditions.
-  mixed_idx <- which(train_lhs$nace2d %in% MIXED_SECTORS)
-  threshold_pct <- NA_real_
-
-  if (length(mixed_idx) > 0) {
-    mixed_df <- data.frame(
-      vat   = train_lhs$vat[mixed_idx],
-      year  = train_lhs$year[mixed_idx],
-      emit  = train_lhs$y[mixed_idx] > 0,
-      sec   = train_lhs$nace2d[mixed_idx],
-      fold  = inner_foldid[mixed_idx],
-      proxy = 0,
-      stringsAsFactors = FALSE
-    )
-
-    for (k in seq_len(K_inner)) {
-      rows_k <- which(mixed_df$fold == k)
-      if (length(rows_k) == 0) next
-
-      train_rows <- which(inner_foldid != k)
-
-      # Fit glmnet at the lambda.min chosen by Stage B (single lambda, fast)
-      fit_k <- glmnet(
-        x = X_full[train_rows, , drop = FALSE],
-        y = y_vec[train_rows],
-        family = "gaussian", alpha = alpha,
-        penalty.factor = pf, lambda = fit$lambda.min,
-        standardize = TRUE
-      )
-
-      coef_k <- extract_suppliers(fit_k, n_controls, eligible_sellers_enet,
-                                   s = fit$lambda.min)
-      if (nrow(coef_k) == 0) next
-
-      # Supplier-only proxy for held-out mixed-sector firms
-      fold_vats <- mixed_df$vat[rows_k]
-      proxy_k <- b2b_lhs[b2b_lhs$vat_j_ano %in% fold_vats, ] %>%
-        inner_join(coef_k, by = "vat_i_ano") %>%
-        group_by(vat_j_ano, year) %>%
-        summarise(proxy = sum(coef * asinh(corr_sales_ij), na.rm = TRUE),
-                  .groups = "drop") %>%
-        mutate(proxy = pmax(proxy, 0))
-
-      # Match back to mixed_df
-      key_df    <- paste(mixed_df$vat[rows_k], mixed_df$year[rows_k])
-      key_proxy <- paste(proxy_k$vat_j_ano, proxy_k$year)
-      m <- match(key_df, key_proxy)
-      mixed_df$proxy[rows_k] <- ifelse(is.na(m), 0, proxy_k$proxy[m])
-    }
-
-    # Youden threshold per mixed sector, then average
-    pcts <- numeric(0)
-    for (sec in unique(mixed_df$sec)) {
-      sec_mask <- mixed_df$sec == sec
-      pct_s <- youden_threshold_pct(mixed_df$proxy[sec_mask], mixed_df$emit[sec_mask])
-      if (!is.na(pct_s) && pct_s > 0) pcts <- c(pcts, pct_s)
-    }
-    if (length(pcts) > 0) threshold_pct <- mean(pcts)
-  }
-  rm(fit, X_full)
-
-  # --- 5.10 GPA reference distribution from subsample's ETS emitters ---
+  # --- 5.8b GPA reference distribution from subsample's ETS emitters ---
   ets_emit <- train_lhs[train_lhs$euets == 1 & train_lhs$y > 0, ]
   ref_dist   <- build_reference_dist(ets_emit$y, ets_emit$year, ets_emit$nace2d)
   gpa_params <- fit_gpa(ref_dist)
 
-  list(proxy = proxy, gpa_params = gpa_params, threshold_pct = threshold_pct)
+  rm(fit, X_full)
+
+  list(proxy = proxy, gpa_params = gpa_params)
 }
 
 
@@ -440,7 +344,7 @@ if (use_parallel) {
     .export = c("lhs", "b2b_lhs", "b2b_deploy",
                 "ALPHA", "K_INNER", "MIN_LHS_BUYERS", "SUBSAMPLE_FRAC",
                 "BASE_SEED", "extract_suppliers", "draw_subsample_vats",
-                "run_one_subsample", "MIXED_SECTORS", "youden_threshold_pct",
+                "run_one_subsample",
                 "build_reference_dist", "fit_gpa")
   ) %dopar% {
     t0_b <- Sys.time()
@@ -450,7 +354,6 @@ if (use_parallel) {
                                 SUBSAMPLE_FRAC, seed_b)
     list(proxy      = res_b$proxy,
          gpa_params = res_b$gpa_params,
-         threshold_pct = res_b$threshold_pct,
          time       = as.numeric(difftime(Sys.time(), t0_b, units = "mins")))
   }
 
@@ -458,8 +361,7 @@ if (use_parallel) {
 
   total_time  <- round(difftime(Sys.time(), t0_all, units = "mins"), 1)
   proxy_list  <- lapply(all_results, `[[`, "proxy")
-  draw_params <- lapply(all_results, function(r) list(gpa_params = r$gpa_params,
-                                                       threshold_pct = r$threshold_pct))
+  draw_params <- lapply(all_results, function(r) list(gpa_params = r$gpa_params))
   draw_timing <- sapply(all_results, `[[`, "time")
   rm(all_results)
 
@@ -483,8 +385,7 @@ if (use_parallel) {
                                 ALPHA, K_INNER, MIN_LHS_BUYERS,
                                 SUBSAMPLE_FRAC, seed_b)
     proxy_list[[b]]  <- res_b$proxy
-    draw_params[[b]] <- list(gpa_params = res_b$gpa_params,
-                              threshold_pct = res_b$threshold_pct)
+    draw_params[[b]] <- list(gpa_params = res_b$gpa_params)
     gc()
 
     elapsed_b      <- as.numeric(difftime(Sys.time(), t0_b, units = "mins"))
@@ -501,65 +402,38 @@ if (use_parallel) {
 
 
 # =============================================================================
-# STEP 7: Average proxy across B draws
+# STEP 7: Build deployment firm-year grid and save
 # =============================================================================
-cat("Averaging proxy across B draws...\n")
 
 # Canonical deployment firm-year grid: union of all (vat, year) pairs
 deployment_firm_years <- b2b_deploy %>%
   distinct(vat_j_ano, year) %>%
   rename(vat = vat_j_ano)
 
-# For each draw, fill missing firm-years with 0 (no supplier matches → proxy = 0)
-proxy_matrix <- do.call(cbind, lapply(proxy_list, function(px) {
-  deployment_firm_years %>%
-    left_join(px, by = c("vat", "year")) %>%
-    mutate(proxy = coalesce(proxy, 0)) %>%
-    pull(proxy)
-}))
-
-proxy_avg_vec <- rowMeans(proxy_matrix)
-proxy_sd_vec  <- apply(proxy_matrix, 1, sd)
-rm(proxy_matrix)
-
-proxy_avg <- deployment_firm_years %>%
-  mutate(
-    proxy_avg = proxy_avg_vec,
-    proxy_sd  = proxy_sd_vec
-  )
-
 cat("Deployment firm-years:", nrow(deployment_firm_years), "obs,",
     n_distinct(deployment_firm_years$vat), "firms\n")
-cat("  Predicted emitters (proxy_avg > 0):",
-    sum(proxy_avg$proxy_avg > 0),
-    sprintf("(%.1f%%)\n", 100 * mean(proxy_avg$proxy_avg > 0)))
-cat("  Mean proxy SD:", round(mean(proxy_avg$proxy_sd, na.rm = TRUE), 4), "\n\n")
+
+# Quick summary of emitter rates across draws
+emit_counts <- sapply(proxy_list, function(px) sum(px$proxy > 0))
+cat("  Emitters per draw: mean =", round(mean(emit_counts)),
+    " sd =", round(sd(emit_counts)), "\n\n")
 
 
 # =============================================================================
 # STEP 8: Save
 # =============================================================================
-# deployment_firm_years: defines the deployment grid (vat, year) — copy to local 1
-# proxy_avg: averaged proxy values for deployment firms — copy to local 1
-# proxy_list: heavy (B draws) — keep on RMD for uncertainty propagation (Stage B)
 
 save(deployment_firm_years, file = file.path(PROC_DATA, "deployment_firm_years.RData"))
-save(proxy_avg,  file = file.path(PROC_DATA, "deployment_proxy_avg.RData"))
 save(proxy_list, file = file.path(PROC_DATA, "deployment_proxy_list.RData"))
 save(draw_params, file = file.path(PROC_DATA, "deployment_draw_params.RData"))
 
-# Summary of draw-specific params
-thresholds <- sapply(draw_params, `[[`, "threshold_pct")
-gpa_ok     <- sapply(draw_params, function(x) !is.null(x$gpa_params))
+gpa_ok <- sapply(draw_params, function(x) !is.null(x$gpa_params))
 
 cat("══════════════════════════════════════════════\n")
 cat("Saved:\n")
-cat("  deployment_firm_years.RData  —", nrow(deployment_firm_years), "firm-years (copy to local 1)\n")
-cat("  deployment_proxy_avg.RData   —", nrow(proxy_avg), "rows (copy to local 1)\n")
-cat("  deployment_proxy_list.RData  —", length(proxy_list), "draws (keep on RMD)\n")
-cat("  deployment_draw_params.RData —", length(draw_params), "draws (copy to local 1)\n")
+cat("  deployment_firm_years.RData  —", nrow(deployment_firm_years), "firm-years\n")
+cat("  deployment_proxy_list.RData  —", length(proxy_list), "draws\n")
+cat("  deployment_draw_params.RData —", length(draw_params), "draws\n")
 cat("    GPA fitted:", sum(gpa_ok), "/", length(draw_params), "draws\n")
-cat("    Threshold: mean =", round(mean(thresholds, na.rm = TRUE), 3),
-    " sd =", round(sd(thresholds, na.rm = TRUE), 3), "\n")
 cat("  B =", B_DRAWS, "| alpha =", ALPHA, "| seed =", BASE_SEED, "\n")
 cat("══════════════════════════════════════════════\n")

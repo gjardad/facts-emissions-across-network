@@ -18,28 +18,12 @@ When copying files from RMD to local 1: RMD → local 2 → cloud (Dropbox/Claud
 
 **EXCEPTION:** You MAY read `inferring_emissions/` code files (including `analysis/`, `preprocess/`, `utils/`) when the explicit purpose is to copy or directly adapt that code into `facts-emissions-across-network/`. This exception exists because this project is meant to be standalone — all necessary code from `inferring_emissions/` should be copied here so that someone can reproduce results without knowing `inferring_emissions/` exists.
 
-## Workflow Orchestration
+## Allocation & Uncertainty Notes
 
-### 1. Plan Node Default
-- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately - don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
+- Allocation and uncertainty propagation operate at the **CRF category × year** level, in both deployment and training.
+- In training, three CRF categories contain both emitters and non-emitters:
+  - **Paper**: NACE 2-digit 17 and 18
+  - **Refinery**: NACE 2-digit 19 only
+  - **Metals**: NACE 2-digit 24 and 25
 
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
 
-### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness

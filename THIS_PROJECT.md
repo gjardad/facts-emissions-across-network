@@ -49,6 +49,17 @@ The imputation model from inferring_emissions is strictly preferable for non-ETS
 
 **4. Imputed emissions.** For firms not covered by the sources above, emissions are imputed using the prediction model developed in the inferring_emissions project.
 
+### NACE source convention for the CRF mapping
+
+The `nace2d → crf_group` lookup is the same in all scripts, but the source of `nace2d` differs by firm type:
+
+- **ETS firms (true ETS + pre-ETS backcast):** `nace5d` field on `firm_year_belgian_euets.RData`. This was sourced from annual accounts upstream (it is *not* `nace_id_from_eutl`, which is the installation-level NACE). Coverage is structurally ~94% of distinct ETS vats — annual accounts simply don't cover every ETS firm (unfiled accounts, foreign-domiciled firms with Belgian installations, etc.). ETS firms with NA `nace2d` are dropped from cell ranking and from the `E_ETS` aggregate, with a logged warning.
+- **Non-ETS firms (deployment):** `nace5d` field on `deployment_panel.RData` (also annual-accounts-derived).
+
+Crucially, the GLO allocation pipeline (`analysis/b_allocation_glo.R` and the upstream `analysis/fit_glo_reference.R`, `analysis/calibrate_pooled_youden_tau.R`) does **not** depend on `annual_accounts_selected_sample_key_variables.RData` for the NACE join. That file is downsampled on local 1; using the EUTL panel's own `nace5d` for ETS firms makes the allocation runnable end-to-end on local 1 with identical filenames and identical conventions to RMD.
+
+This convention matches the `inferring_emissions/` project, which also uses annual-accounts NACE (not EUTL installation NACE) when assigning ETS firms to CRF groups.
+
 ### Sector Conventions
 
 **NACE 17 (paper) and NACE 18 (printing) are ALWAYS treated as a single sector "17/18". NEVER treat them as separate sectors.** Both sectors share upstream pulp/paper supply chains and the distinction is uninformative for emission analysis. This applies everywhere: stratification, fixed effects, dispersion statistics, Youden threshold calibration, and any sector-level aggregation.
