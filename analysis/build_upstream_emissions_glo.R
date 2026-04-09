@@ -31,7 +31,8 @@
 #                     indices 2..(B+1) = perturbation draws)
 #                     Columns: vat, scope1, upstream, upstream_across_2d,
 #                     upstream_within_2d, upstream_across_5d,
-#                     upstream_within_5d, source
+#                     upstream_within_5d, upstream_across_crf,
+#                     upstream_within_crf, source
 #     conv_info     : convergence diagnostics per draw
 #     max_rowsum    : max row sum of A for this year
 #
@@ -116,6 +117,13 @@ accounts <- df_annual_accounts_selected_sample_key_variables %>%
   mutate(nace2d   = make_nace2d(nace5d),
          wage_bill = pmax(coalesce(wage_bill, 0), 0))
 rm(df_annual_accounts_selected_sample_key_variables)
+
+# CRF crosswalk: nace2d -> crf_group
+nace_crf <- read.csv(file.path(REPO_DIR, "preprocess", "crosswalks",
+                                "nace_crf_crosswalk.csv"),
+                      colClasses = c(nace2d = "character"))[, c("nace2d", "crf_group")]
+nace_crf <- rbind(nace_crf, data.frame(nace2d = "17/18", crf_group = "paper"))
+accounts <- merge(accounts, nace_crf, by = "nace2d", all.x = TRUE)
 cat("  Accounts firm-years:", nrow(accounts), "\n")
 
 load(file.path(PROC_DATA, "firm_year_total_imports.RData"))
@@ -279,17 +287,18 @@ for (t in YEARS) {
   if (max_rowsum >= 1)
     cat(sprintf("\n  WARNING year %d: max row sum of A = %.4f >= 1\n", t, max_rowsum))
 
-  # -- NACE sectors for upstream decomposition --------------------------------
+  # -- Sector vectors for upstream decomposition ------------------------------
   acc_match  <- match(all_vats, accounts_t$vat)
   nace2d_vec <- accounts_t$nace2d[acc_match]
   nace5d_vec <- accounts_t$nace5d[acc_match]
+  crf_vec    <- accounts_t$crf_group[acc_match]
 
   # -- Draw loop (parallelized) -----------------------------------------------
   cl <- makeCluster(N_CORES)
   registerDoParallel(cl)
   clusterEvalQ(cl, { library(dplyr); library(Matrix) })
   clusterExport(cl, c("A", "cost_vec", "all_vats",
-                       "nace2d_vec", "nace5d_vec",
+                       "nace2d_vec", "nace5d_vec", "crf_vec",
                        "year_draws",
                        "neumann_series",
                        "NEUMANN_MAXIT", "NEUMANN_TOL"),
@@ -338,15 +347,27 @@ for (t in YEARS) {
     upstream_across_5d_b <- pmax(cost_vec * as.numeric(A %*% m_bar_5d), 0)
     upstream_within_5d_b <- upstream_b - upstream_across_5d_b
 
+    # CRF group decomposition
+    m_bar_crf    <- m_vec
+    has_crf      <- !is.na(crf_vec)
+    if (any(has_crf)) {
+      sm_crf <- tapply(m_vec[has_crf], crf_vec[has_crf], mean)
+      m_bar_crf[has_crf] <- sm_crf[crf_vec[has_crf]]
+    }
+    upstream_across_crf_b <- pmax(cost_vec * as.numeric(A %*% m_bar_crf), 0)
+    upstream_within_crf_b <- upstream_b - upstream_across_crf_b
+
     firms_b <- data.frame(
       vat                = all_vats,
       scope1             = scope1_b,
       upstream           = upstream_b,
       upstream_across_2d = upstream_across_2d_b,
       upstream_within_2d = upstream_within_2d_b,
-      upstream_across_5d = upstream_across_5d_b,
-      upstream_within_5d = upstream_within_5d_b,
-      source             = source_vec,
+      upstream_across_5d  = upstream_across_5d_b,
+      upstream_within_5d  = upstream_within_5d_b,
+      upstream_across_crf = upstream_across_crf_b,
+      upstream_within_crf = upstream_within_crf_b,
+      source              = source_vec,
       stringsAsFactors   = FALSE
     )
     firms_b <- firms_b[firms_b$scope1 > 0 | firms_b$upstream > 0, ]

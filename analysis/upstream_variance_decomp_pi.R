@@ -1,28 +1,31 @@
 ###############################################################################
-# analysis/upstream_dispersion_pi.R
+# analysis/upstream_variance_decomp_pi.R
 #
 # PURPOSE
-#   RQ2: within-sector dispersion of upstream embodied emissions and upstream
-#   carbon productivity, with prediction intervals from the B perturbation
-#   draws plus the deterministic point estimate.
+#   Decompose within-sector variance of upstream emission intensity
+#   (upstream / revenue) into:
+#     - across-sector component: heterogeneity in average supplier-sector
+#       emission intensity (input mix × sector-avg multiplier)
+#     - within-sector component: firm-level supplier selection within sectors
+#     - covariance term: 2 × cov(across, within) / var(total)
 #
-#   For each sector × year (at three granularities: NACE 2-digit, NACE 5-digit,
-#   and CRF category):
-#     - Point estimate: statistics from draw 0 (deterministic GLO allocation
-#       propagated through the Leontief model)
-#     - Prediction interval: 2.5th and 97.5th percentiles across B draws
+#   Identity: var(u) = var(a) + var(w) + 2·cov(a,w)
+#             1      = share_across + share_within + share_cov
 #
-#   Also computes: scope 1 vs upstream rank correlation (Spearman).
+#   Point estimates from draw 0 (deterministic GLO allocation); prediction
+#   intervals from quantiles across B perturbation draws.
+#
+#   Decomposition at NACE 2-digit, 5-digit, and CRF category granularity.
 #
 # INPUT
 #   {PROC_DATA}/upstream_emissions_glo_<scheme>/firms_YYYY.RData
 #   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
 #
 # OUTPUT
-#   {PROC_DATA}/upstream_dispersion_pi_<scheme>.RData
-#     disp_point_*  : point-estimate dispersion by sector x year (from draw 0)
-#     disp_draws_*  : all B draw-level dispersion stats
-#     disp_summary_*: point estimate + 90%/95% PIs per sector-year
+#   {PROC_DATA}/upstream_variance_decomp_pi_<scheme>.RData
+#     vd_point_*  : point-estimate decomposition by sector x year
+#     vd_draws_*  : all B draw-level decomposition stats
+#     vd_summary_*: point estimate + 90%/95% PIs per sector-year
 #     (* = 2d, 5d, crf for the three granularities)
 #
 # RUNS ON: local 1 or RMD (reads upstream_emissions output, no B2B needed)
@@ -55,7 +58,7 @@ UPSTREAM_DIR <- file.path(PROC_DATA,
   sprintf("upstream_emissions_glo_%s", WEIGHT_SCHEME))
 
 cat("===================================================================\n")
-cat("  UPSTREAM DISPERSION WITH PREDICTION INTERVALS\n")
+cat("  UPSTREAM VARIANCE DECOMPOSITION WITH PREDICTION INTERVALS\n")
 cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
 cat("  Years:", min(YEARS), "--", max(YEARS), "\n")
 cat("===================================================================\n\n")
@@ -81,7 +84,6 @@ nace_crf <- fread(file.path(REPO_DIR, "preprocess", "crosswalks",
                              "nace_crf_crosswalk.csv"),
                    select = c("nace2d", "crf_group"),
                    colClasses = c(nace2d = "character"))
-# Add combined "17/18" row (both map to "paper") to match make_nace2d() convention
 nace_crf <- rbind(nace_crf,
                    data.table(nace2d = "17/18", crf_group = "paper"))
 accounts <- merge(accounts, nace_crf, by = "nace2d", all.x = TRUE)
@@ -89,61 +91,66 @@ cat("  Accounts firm-years:", nrow(accounts), "\n\n")
 
 
 # =============================================================================
-# SECTION 2: Dispersion statistics helper functions
+# SECTION 2: Variance decomposition helper
 # =============================================================================
 
-gini <- function(x) {
-  x <- x[!is.na(x) & x > 0]
-  n <- length(x)
-  if (n < 2L) return(NA_real_)
-  x <- sort(x)
-  2 * sum(x * seq_len(n)) / (n * sum(x)) - (n + 1L) / n
+# Decompose var(upstream/revenue) into across-sector and within-sector shares.
+# upstream = across + within by construction (from build_upstream_emissions_glo.R),
+# so var(u) = var(a) + var(w) + 2*cov(a,w).
+var_decomp <- function(upstream, across, within, revenue, min_n = MIN_N_STATS) {
+  ok <- !is.na(upstream) & !is.na(revenue) & upstream > 0 & revenue > 0
+  n <- sum(ok)
+  if (n < min_n) {
+    return(data.table(
+      n_firms      = n,
+      var_total    = NA_real_,
+      share_across = NA_real_,
+      share_within = NA_real_,
+      share_cov    = NA_real_
+    ))
+  }
+  u <- upstream[ok] / revenue[ok]
+  a <- across[ok]   / revenue[ok]
+  w <- within[ok]   / revenue[ok]
+
+  vt <- var(u)
+  va <- var(a)
+  vw <- var(w)
+  ca <- cov(a, w)
+
+  data.table(
+    n_firms      = n,
+    var_total    = vt,
+    share_across = va / vt,
+    share_within = vw / vt,
+    share_cov    = 2 * ca / vt
+  )
 }
 
-pct_ratio <- function(x, p_hi, p_lo) {
-  x <- x[!is.na(x) & x > 0]
-  if (length(x) < 2L) return(NA_real_)
-  q <- quantile(x, c(p_lo, p_hi), names = FALSE)
-  if (q[1L] == 0) return(NA_real_)
-  q[2L] / q[1L]
-}
+compute_vd <- function(firms_dt) {
+  # firms_dt must have: nace2d, nace5d, crf_group, upstream,
+  #   upstream_across_2d/5d/crf, upstream_within_2d/5d/crf, revenue
+  firms_dt <- firms_dt[!is.na(nace2d)]
 
-compute_upstream_stats <- function(firms_dt, group_col) {
-  # firms_dt must have: scope1, upstream, revenue, and the column named by group_col
-  firms_dt <- firms_dt[!is.na(get(group_col))]
+  # NACE 2-digit decomposition
+  vd2d <- firms_dt[upstream > 0 | scope1 > 0,
+    var_decomp(upstream, upstream_across_2d, upstream_within_2d, revenue),
+    by = nace2d
+  ][n_firms >= MIN_N_STATS]
 
-  firms_dt[upstream > 0 | scope1 > 0, .(
-    n_firms            = .N,
-    # Upstream dispersion
-    up_gini            = gini(upstream),
-    up_p90p10          = pct_ratio(upstream, 0.9, 0.1),
-    up_p75p25          = pct_ratio(upstream, 0.75, 0.25),
-    up_var_log         = if (sum(upstream > 0) >= 2L) var(log(upstream[upstream > 0] + 1)) else NA_real_,
-    # Upstream carbon productivity (revenue / upstream)
-    ucp_p90p10         = {
-      ok <- upstream > 0 & revenue > 0
-      if (sum(ok) >= 2L) pct_ratio(revenue[ok] / upstream[ok], 0.9, 0.1) else NA_real_
-    },
-    ucp_p75p25         = {
-      ok <- upstream > 0 & revenue > 0
-      if (sum(ok) >= 2L) pct_ratio(revenue[ok] / upstream[ok], 0.75, 0.25) else NA_real_
-    },
-    ucp_var_log        = {
-      ok <- upstream > 0 & revenue > 0
-      cp <- revenue[ok] / upstream[ok]
-      if (length(cp) >= 2L) var(log(cp)) else NA_real_
-    },
-    ucp_p9010_log      = {
-      ok <- upstream > 0 & revenue > 0
-      cp <- revenue[ok] / upstream[ok]
-      if (length(cp) >= 2L) diff(quantile(log(cp), c(0.1, 0.9))) else NA_real_
-    },
-    # Scope 1 vs upstream rank correlation
-    spearman_s1_up     = {
-      ok <- scope1 > 0 & upstream > 0
-      if (sum(ok) >= 3L) cor(scope1[ok], upstream[ok], method = "spearman") else NA_real_
-    }
-  ), by = group_col][n_firms >= MIN_N_STATS]
+  # NACE 5-digit decomposition
+  vd5d <- firms_dt[upstream > 0 | scope1 > 0,
+    var_decomp(upstream, upstream_across_5d, upstream_within_5d, revenue),
+    by = nace5d
+  ][n_firms >= MIN_N_STATS]
+
+  # CRF group decomposition
+  vdcrf <- firms_dt[upstream > 0 | scope1 > 0,
+    var_decomp(upstream, upstream_across_crf, upstream_within_crf, revenue),
+    by = crf_group
+  ][n_firms >= MIN_N_STATS]
+
+  list(vd2d = vd2d, vd5d = vd5d, vdcrf = vdcrf)
 }
 
 
@@ -153,10 +160,11 @@ compute_upstream_stats <- function(firms_dt, group_col) {
 
 cat("-- Processing upstream files ----------------------------------------\n")
 
-GROUP_LEVELS <- c("nace2d", "nace5d", "crf_group")
+GRANULARITIES <- c("vd2d", "vd5d", "vdcrf")
+GROUP_COLS    <- c(vd2d = "nace2d", vd5d = "nace5d", vdcrf = "crf_group")
 
-point_lists <- setNames(lapply(GROUP_LEVELS, function(x) list()), GROUP_LEVELS)
-draw_lists  <- setNames(lapply(GROUP_LEVELS, function(x) list()), GROUP_LEVELS)
+point_lists <- setNames(lapply(GRANULARITIES, function(x) list()), GRANULARITIES)
+draw_lists  <- setNames(lapply(GRANULARITIES, function(x) list()), GRANULARITIES)
 t0 <- Sys.time()
 
 for (t in YEARS) {
@@ -176,17 +184,18 @@ for (t in YEARS) {
                       accounts_t[, .(vat, nace2d, nace5d, crf_group, revenue)],
                       by = "vat", all.x = TRUE)
 
-    for (g in GROUP_LEVELS) {
-      st <- compute_upstream_stats(firms_b, g)
-      if (nrow(st) == 0) next
+    vd <- compute_vd(firms_b)
 
-      st[, year := t]
+    for (g in GRANULARITIES) {
+      vd_g <- vd[[g]]
+      if (nrow(vd_g) == 0) next
 
       if (b == 1L) {
-        point_lists[[g]][[length(point_lists[[g]]) + 1]] <- st
+        vd_g[, year := t]
+        point_lists[[g]][[length(point_lists[[g]]) + 1]] <- vd_g
       } else {
-        st[, draw := b - 1L]
-        draw_lists[[g]][[length(draw_lists[[g]]) + 1]] <- st
+        vd_g[, `:=`(year = t, draw = b - 1L)]
+        draw_lists[[g]][[length(draw_lists[[g]]) + 1]] <- vd_g
       }
     }
   }
@@ -198,28 +207,26 @@ for (t in YEARS) {
   gc()
 }
 
-disp_point_2d  <- rbindlist(point_lists[["nace2d"]])
-disp_point_5d  <- rbindlist(point_lists[["nace5d"]])
-disp_point_crf <- rbindlist(point_lists[["crf_group"]])
-disp_draws_2d  <- rbindlist(draw_lists[["nace2d"]])
-disp_draws_5d  <- rbindlist(draw_lists[["nace5d"]])
-disp_draws_crf <- rbindlist(draw_lists[["crf_group"]])
+vd_point_2d  <- rbindlist(point_lists[["vd2d"]])
+vd_point_5d  <- rbindlist(point_lists[["vd5d"]])
+vd_point_crf <- rbindlist(point_lists[["vdcrf"]])
+vd_draws_2d  <- rbindlist(draw_lists[["vd2d"]])
+vd_draws_5d  <- rbindlist(draw_lists[["vd5d"]])
+vd_draws_crf <- rbindlist(draw_lists[["vdcrf"]])
 
 cat(sprintf("\n  Point — 2d: %d | 5d: %d | crf: %d sector-years\n",
-            nrow(disp_point_2d), nrow(disp_point_5d), nrow(disp_point_crf)))
+            nrow(vd_point_2d), nrow(vd_point_5d), nrow(vd_point_crf)))
 cat(sprintf("  Draws — 2d: %d | 5d: %d | crf: %d\n\n",
-            nrow(disp_draws_2d), nrow(disp_draws_5d), nrow(disp_draws_crf)))
+            nrow(vd_draws_2d), nrow(vd_draws_5d), nrow(vd_draws_crf)))
 
 
 # =============================================================================
-# SECTION 4: Summarize draws into PIs
+# SECTION 4: Summarize draws into prediction intervals
 # =============================================================================
 
 cat("-- Summarizing draws into prediction intervals ----------------------\n")
 
-stat_cols <- c("up_gini", "up_p90p10", "up_p75p25", "up_var_log",
-               "ucp_p90p10", "ucp_p75p25", "ucp_var_log", "ucp_p9010_log",
-               "spearman_s1_up")
+stat_cols <- c("var_total", "share_across", "share_within", "share_cov")
 
 build_pi <- function(draws_dt, group_col) {
   draws_dt[, {
@@ -245,15 +252,15 @@ build_pi <- function(draws_dt, group_col) {
   }, by = c(group_col, "year")]
 }
 
-disp_summary_2d  <- merge(build_pi(disp_draws_2d,  "nace2d"),    disp_point_2d,
-                           by = c("nace2d", "year"),    all.x = TRUE, suffixes = c("", "_point"))
-disp_summary_5d  <- merge(build_pi(disp_draws_5d,  "nace5d"),    disp_point_5d,
-                           by = c("nace5d", "year"),    all.x = TRUE, suffixes = c("", "_point"))
-disp_summary_crf <- merge(build_pi(disp_draws_crf, "crf_group"), disp_point_crf,
-                           by = c("crf_group", "year"), all.x = TRUE, suffixes = c("", "_point"))
+vd_summary_2d  <- merge(build_pi(vd_draws_2d,  "nace2d"),    vd_point_2d,
+                         by = c("nace2d", "year"),    all.x = TRUE, suffixes = c("", "_point"))
+vd_summary_5d  <- merge(build_pi(vd_draws_5d,  "nace5d"),    vd_point_5d,
+                         by = c("nace5d", "year"),    all.x = TRUE, suffixes = c("", "_point"))
+vd_summary_crf <- merge(build_pi(vd_draws_crf, "crf_group"), vd_point_crf,
+                         by = c("crf_group", "year"), all.x = TRUE, suffixes = c("", "_point"))
 
 cat(sprintf("  Summary — 2d: %d | 5d: %d | crf: %d sector-years with PIs\n\n",
-            nrow(disp_summary_2d), nrow(disp_summary_5d), nrow(disp_summary_crf)))
+            nrow(vd_summary_2d), nrow(vd_summary_5d), nrow(vd_summary_crf)))
 
 
 # =============================================================================
@@ -262,25 +269,27 @@ cat(sprintf("  Summary — 2d: %d | 5d: %d | crf: %d sector-years with PIs\n\n",
 
 cat("-- Diagnostics -------------------------------------------------------\n\n")
 
-cat("Point-estimate upstream Gini by NACE 2d (averaged across years):\n")
-pt_avg <- disp_point_2d[, .(mean_gini = round(mean(up_gini, na.rm = TRUE), 3),
-                              n_years   = .N),
-                          by = nace2d][order(nace2d)]
-print(pt_avg)
+cat("Variance decomposition shares (NACE 2d, point estimate, averaged across years):\n")
+vd_avg <- vd_point_2d[, .(
+  share_across = round(mean(share_across, na.rm = TRUE), 3),
+  share_within = round(mean(share_within, na.rm = TRUE), 3),
+  share_cov    = round(mean(share_cov,    na.rm = TRUE), 3),
+  n_years      = .N
+), by = nace2d][order(nace2d)]
+print(vd_avg)
 
-cat("\nPoint-estimate upstream Gini by CRF group (averaged across years):\n")
-pt_avg_crf <- disp_point_crf[, .(mean_gini = round(mean(up_gini, na.rm = TRUE), 3),
-                                   n_years   = .N),
-                               by = crf_group][order(crf_group)]
-print(pt_avg_crf)
+cat("\nVariance decomposition shares (CRF, point estimate, averaged across years):\n")
+vd_avg_crf <- vd_point_crf[, .(
+  share_across = round(mean(share_across, na.rm = TRUE), 3),
+  share_within = round(mean(share_within, na.rm = TRUE), 3),
+  share_cov    = round(mean(share_cov,    na.rm = TRUE), 3),
+  n_years      = .N
+), by = crf_group][order(crf_group)]
+print(vd_avg_crf)
 
-cat("\n95% PI width for up_gini (NACE 2d):\n")
-disp_summary_2d[, gini_width := up_gini_hi95 - up_gini_lo95]
-cat(sprintf("  Median: %.4f\n", median(disp_summary_2d$gini_width, na.rm = TRUE)))
-
-cat("\nSpearman(scope1, upstream) point estimate (NACE 2d):\n")
-cat(sprintf("  Median: %.3f\n",
-            median(disp_point_2d$spearman_s1_up, na.rm = TRUE)))
+cat("\n95% PI width for share_within (NACE 2d):\n")
+vd_summary_2d[, sw_width := share_within_hi95 - share_within_lo95]
+cat(sprintf("  Median: %.4f\n", median(vd_summary_2d$sw_width, na.rm = TRUE)))
 
 
 # =============================================================================
@@ -288,11 +297,12 @@ cat(sprintf("  Median: %.3f\n",
 # =============================================================================
 
 OUT_PATH <- file.path(PROC_DATA,
-  sprintf("upstream_dispersion_pi_%s.RData", WEIGHT_SCHEME))
+  sprintf("upstream_variance_decomp_pi_%s.RData", WEIGHT_SCHEME))
+
 save(
-  disp_point_2d,  disp_draws_2d,  disp_summary_2d,
-  disp_point_5d,  disp_draws_5d,  disp_summary_5d,
-  disp_point_crf, disp_draws_crf, disp_summary_crf,
+  vd_point_2d,  vd_point_5d,  vd_point_crf,
+  vd_draws_2d,  vd_draws_5d,  vd_draws_crf,
+  vd_summary_2d, vd_summary_5d, vd_summary_crf,
   WEIGHT_SCHEME, MIN_N_STATS, stat_cols,
   file = OUT_PATH
 )
@@ -300,9 +310,9 @@ save(
 cat(sprintf("\n===================================================================\n"))
 cat("Saved:", OUT_PATH, "\n")
 cat(sprintf("  2d  — point: %d | draws: %d | summary: %d\n",
-            nrow(disp_point_2d),  nrow(disp_draws_2d),  nrow(disp_summary_2d)))
+            nrow(vd_point_2d),  nrow(vd_draws_2d),  nrow(vd_summary_2d)))
 cat(sprintf("  5d  — point: %d | draws: %d | summary: %d\n",
-            nrow(disp_point_5d),  nrow(disp_draws_5d),  nrow(disp_summary_5d)))
+            nrow(vd_point_5d),  nrow(vd_draws_5d),  nrow(vd_summary_5d)))
 cat(sprintf("  crf — point: %d | draws: %d | summary: %d\n",
-            nrow(disp_point_crf), nrow(disp_draws_crf), nrow(disp_summary_crf)))
+            nrow(vd_point_crf), nrow(vd_draws_crf), nrow(vd_summary_crf)))
 cat("===================================================================\n")

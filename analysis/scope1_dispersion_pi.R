@@ -5,7 +5,8 @@
 #   RQ1: within-sector dispersion of scope 1 emissions and carbon productivity,
 #   with prediction intervals from the B perturbation draws.
 #
-#   For each NACE 2-digit sector × year:
+#   For each sector × year (at three granularities: NACE 2-digit, NACE 5-digit,
+#   and CRF category):
 #     - Point estimate: dispersion statistics from the deterministic GLO
 #       allocation (allocation_glo_<scheme>/).
 #     - Prediction interval: 2.5th and 97.5th percentiles of the same
@@ -22,9 +23,10 @@
 #
 # OUTPUT
 #   {PROC_DATA}/scope1_dispersion_pi_<scheme>.RData
-#     disp_point    : data.frame with point-estimate dispersion by nace2d x year
-#     disp_draws    : data.frame with all B draw-level dispersion stats
-#     disp_summary  : data.frame with point estimate + 90%/95% PIs per cell
+#     disp_point_*  : point-estimate dispersion by sector x year
+#     disp_draws_*  : all B draw-level dispersion stats
+#     disp_summary_*: point estimate + 90%/95% PIs per sector-year
+#     (* = 2d, 5d, crf for the three granularities)
 #
 # RUNS ON: local 1
 ###############################################################################
@@ -76,6 +78,16 @@ accounts <- df_annual_accounts_selected_sample_key_variables %>%
          revenue = pmax(coalesce(revenue, 0), 0))
 rm(df_annual_accounts_selected_sample_key_variables)
 setDT(accounts)
+
+# CRF crosswalk: nace2d -> crf_group
+nace_crf <- fread(file.path(REPO_DIR, "preprocess", "crosswalks",
+                             "nace_crf_crosswalk.csv"),
+                   select = c("nace2d", "crf_group"),
+                   colClasses = c(nace2d = "character"))
+# Add combined "17/18" row (both map to "paper") to match make_nace2d() convention
+nace_crf <- rbind(nace_crf,
+                   data.table(nace2d = "17/18", crf_group = "paper"))
+accounts <- merge(accounts, nace_crf, by = "nace2d", all.x = TRUE)
 cat("  Accounts firm-years:", nrow(accounts), "\n\n")
 
 
@@ -99,10 +111,10 @@ pct_ratio <- function(x, p_hi, p_lo) {
   q[2L] / q[1L]
 }
 
-compute_sector_stats <- function(firms_dt) {
-  # firms_dt must have: nace2d, scope1, revenue (all with year already fixed)
-  # Returns one row per nace2d with dispersion stats
-  firms_dt <- firms_dt[scope1 > 0 & !is.na(nace2d)]
+compute_sector_stats <- function(firms_dt, group_col) {
+  # firms_dt must have: scope1, revenue, and the column named by group_col
+  # Returns one row per group with dispersion stats
+  firms_dt <- firms_dt[scope1 > 0 & !is.na(get(group_col))]
 
   firms_dt[, .(
     n_firms     = .N,
@@ -128,7 +140,7 @@ compute_sector_stats <- function(firms_dt) {
       cp <- revenue[ok] / scope1[ok]
       if (length(cp) >= 2L) diff(quantile(log(cp), c(0.1, 0.9))) else NA_real_
     }
-  ), by = nace2d][n_firms >= MIN_N_STATS]
+  ), by = group_col][n_firms >= MIN_N_STATS]
 }
 
 
@@ -138,7 +150,9 @@ compute_sector_stats <- function(firms_dt) {
 
 cat("-- Point estimate from deterministic allocation ----------------------\n")
 
-disp_point_list <- list()
+GROUP_LEVELS <- c("nace2d", "nace5d", "crf_group")
+
+point_lists <- setNames(lapply(GROUP_LEVELS, function(x) list()), GROUP_LEVELS)
 
 for (t in YEARS) {
   alloc_path <- file.path(ALLOC_DIR, sprintf("alloc_%d.RData", t))
@@ -150,18 +164,23 @@ for (t in YEARS) {
 
   setDT(year_firms)
   firms_t <- merge(year_firms[, .(vat, scope1)],
-                    accounts[year == t, .(vat, nace2d, revenue)],
+                    accounts[year == t, .(vat, nace2d, nace5d, crf_group, revenue)],
                     by = "vat", all.x = TRUE)
 
-  st <- compute_sector_stats(firms_t)
-  if (nrow(st) > 0) {
-    st[, year := t]
-    disp_point_list[[length(disp_point_list) + 1]] <- st
+  for (g in GROUP_LEVELS) {
+    st <- compute_sector_stats(firms_t, g)
+    if (nrow(st) > 0) {
+      st[, year := t]
+      point_lists[[g]][[length(point_lists[[g]]) + 1]] <- st
+    }
   }
 }
 
-disp_point <- rbindlist(disp_point_list)
-cat(sprintf("  Point estimate: %d sector-years\n\n", nrow(disp_point)))
+disp_point_2d  <- rbindlist(point_lists[["nace2d"]])
+disp_point_5d  <- rbindlist(point_lists[["nace5d"]])
+disp_point_crf <- rbindlist(point_lists[["crf_group"]])
+cat(sprintf("  Point estimate — 2d: %d | 5d: %d | crf: %d sector-years\n\n",
+            nrow(disp_point_2d), nrow(disp_point_5d), nrow(disp_point_crf)))
 
 
 # =============================================================================
@@ -175,16 +194,14 @@ draw_files <- sort(list.files(DRAW_DIR, pattern = "^draw_\\d+\\.RData$",
 B <- length(draw_files)
 cat(sprintf("  Found %d draw files\n", B))
 
-disp_draw_list <- list()
+draw_lists <- setNames(lapply(GROUP_LEVELS, function(x) list()), GROUP_LEVELS)
 t0 <- Sys.time()
 
 for (b in seq_len(B)) {
   load(draw_files[b])  # loads draw_firms
   setDT(draw_firms)
 
-  # Join accounts for revenue and nace2d
   # draw_firms has: vat, year, crf_group, scope1_b, source, rank_in_cell, ...
-  # Rename scope1_b -> scope1 for the stats function
   setnames(draw_firms, "scope1_b", "scope1")
 
   for (t in YEARS) {
@@ -192,13 +209,15 @@ for (b in seq_len(B)) {
     if (nrow(firms_bt) == 0) next
 
     firms_bt <- merge(firms_bt[, .(vat, scope1)],
-                       accounts[year == t, .(vat, nace2d, revenue)],
+                       accounts[year == t, .(vat, nace2d, nace5d, crf_group, revenue)],
                        by = "vat", all.x = TRUE)
 
-    st <- compute_sector_stats(firms_bt)
-    if (nrow(st) > 0) {
-      st[, `:=`(year = t, draw = b)]
-      disp_draw_list[[length(disp_draw_list) + 1]] <- st
+    for (g in GROUP_LEVELS) {
+      st <- compute_sector_stats(firms_bt, g)
+      if (nrow(st) > 0) {
+        st[, `:=`(year = t, draw = b)]
+        draw_lists[[g]][[length(draw_lists[[g]]) + 1]] <- st
+      }
     }
   }
 
@@ -208,10 +227,13 @@ for (b in seq_len(B)) {
   }
 }
 
-disp_draws <- rbindlist(disp_draw_list)
+disp_draws_2d  <- rbindlist(draw_lists[["nace2d"]])
+disp_draws_5d  <- rbindlist(draw_lists[["nace5d"]])
+disp_draws_crf <- rbindlist(draw_lists[["crf_group"]])
 total_time <- round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1)
 cat(sprintf("  All draws done in %.1f min\n", total_time))
-cat(sprintf("  Total draw-level sector-years: %d\n\n", nrow(disp_draws)))
+cat(sprintf("  Draw-level — 2d: %d | 5d: %d | crf: %d\n\n",
+            nrow(disp_draws_2d), nrow(disp_draws_5d), nrow(disp_draws_crf)))
 
 
 # =============================================================================
@@ -223,35 +245,39 @@ cat("-- Summarizing draws into prediction intervals ----------------------\n")
 stat_cols <- c("s1_gini", "s1_p90p10", "s1_p75p25", "s1_var_log",
                "cp_p90p10", "cp_p75p25", "cp_var_log", "cp_p9010_log")
 
-# Per (nace2d, year): median, 2.5th, 97.5th, 5th, 95th across draws
-disp_pi <- disp_draws[, {
-  out <- list(n_draws = .N)
-  for (col in stat_cols) {
-    v <- get(col)
-    v <- v[!is.na(v)]
-    if (length(v) >= 5L) {
-      out[[paste0(col, "_median")]] <- median(v)
-      out[[paste0(col, "_lo95")]]   <- quantile(v, 0.025, names = FALSE)
-      out[[paste0(col, "_hi95")]]   <- quantile(v, 0.975, names = FALSE)
-      out[[paste0(col, "_lo90")]]   <- quantile(v, 0.05,  names = FALSE)
-      out[[paste0(col, "_hi90")]]   <- quantile(v, 0.95,  names = FALSE)
-    } else {
-      out[[paste0(col, "_median")]] <- NA_real_
-      out[[paste0(col, "_lo95")]]   <- NA_real_
-      out[[paste0(col, "_hi95")]]   <- NA_real_
-      out[[paste0(col, "_lo90")]]   <- NA_real_
-      out[[paste0(col, "_hi90")]]   <- NA_real_
+build_pi <- function(draws_dt, group_col) {
+  draws_dt[, {
+    out <- list(n_draws = .N)
+    for (col in stat_cols) {
+      v <- get(col)
+      v <- v[!is.na(v)]
+      if (length(v) >= 5L) {
+        out[[paste0(col, "_median")]] <- median(v)
+        out[[paste0(col, "_lo95")]]   <- quantile(v, 0.025, names = FALSE)
+        out[[paste0(col, "_hi95")]]   <- quantile(v, 0.975, names = FALSE)
+        out[[paste0(col, "_lo90")]]   <- quantile(v, 0.05,  names = FALSE)
+        out[[paste0(col, "_hi90")]]   <- quantile(v, 0.95,  names = FALSE)
+      } else {
+        out[[paste0(col, "_median")]] <- NA_real_
+        out[[paste0(col, "_lo95")]]   <- NA_real_
+        out[[paste0(col, "_hi95")]]   <- NA_real_
+        out[[paste0(col, "_lo90")]]   <- NA_real_
+        out[[paste0(col, "_hi90")]]   <- NA_real_
+      }
     }
-  }
-  out
-}, by = .(nace2d, year)]
+    out
+  }, by = c(group_col, "year")]
+}
 
-# Merge point estimate into the PI summary
-disp_summary <- merge(disp_pi, disp_point,
-                       by = c("nace2d", "year"), all.x = TRUE,
-                       suffixes = c("", "_point"))
+disp_summary_2d  <- merge(build_pi(disp_draws_2d,  "nace2d"),    disp_point_2d,
+                           by = c("nace2d", "year"),    all.x = TRUE, suffixes = c("", "_point"))
+disp_summary_5d  <- merge(build_pi(disp_draws_5d,  "nace5d"),    disp_point_5d,
+                           by = c("nace5d", "year"),    all.x = TRUE, suffixes = c("", "_point"))
+disp_summary_crf <- merge(build_pi(disp_draws_crf, "crf_group"), disp_point_crf,
+                           by = c("crf_group", "year"), all.x = TRUE, suffixes = c("", "_point"))
 
-cat(sprintf("  Summary: %d sector-years with PIs\n\n", nrow(disp_summary)))
+cat(sprintf("  Summary — 2d: %d | 5d: %d | crf: %d sector-years with PIs\n\n",
+            nrow(disp_summary_2d), nrow(disp_summary_5d), nrow(disp_summary_crf)))
 
 
 # =============================================================================
@@ -260,21 +286,21 @@ cat(sprintf("  Summary: %d sector-years with PIs\n\n", nrow(disp_summary)))
 
 cat("-- Diagnostics -------------------------------------------------------\n\n")
 
-cat("Point-estimate s1_gini by sector (averaged across years):\n")
-pt_avg <- disp_point[, .(mean_gini = round(mean(s1_gini, na.rm = TRUE), 3),
-                          n_years   = .N),
-                      by = nace2d][order(nace2d)]
+cat("Point-estimate s1_gini by NACE 2d (averaged across years):\n")
+pt_avg <- disp_point_2d[, .(mean_gini = round(mean(s1_gini, na.rm = TRUE), 3),
+                              n_years   = .N),
+                          by = nace2d][order(nace2d)]
 print(pt_avg)
 
-cat("\nPI width (95%) for s1_gini, averaged across sector-years:\n")
-disp_summary[, gini_width := s1_gini_hi95 - s1_gini_lo95]
-cat(sprintf("  Median PI width: %.4f\n", median(disp_summary$gini_width, na.rm = TRUE)))
-cat(sprintf("  Mean PI width:   %.4f\n", mean(disp_summary$gini_width, na.rm = TRUE)))
+cat("\nPoint-estimate s1_gini by CRF group (averaged across years):\n")
+pt_avg_crf <- disp_point_crf[, .(mean_gini = round(mean(s1_gini, na.rm = TRUE), 3),
+                                   n_years   = .N),
+                               by = crf_group][order(crf_group)]
+print(pt_avg_crf)
 
-cat("\nExample sector-years (first 10 rows of disp_summary):\n")
-print(head(disp_summary[order(nace2d, year),
-  .(nace2d, year, n_draws,
-    s1_gini, s1_gini_median, s1_gini_lo95, s1_gini_hi95)], 10))
+cat("\n95% PI width for s1_gini (NACE 2d):\n")
+disp_summary_2d[, gini_width := s1_gini_hi95 - s1_gini_lo95]
+cat(sprintf("  Median: %.4f\n", median(disp_summary_2d$gini_width, na.rm = TRUE)))
 
 
 # =============================================================================
@@ -283,13 +309,20 @@ print(head(disp_summary[order(nace2d, year),
 
 OUT_PATH <- file.path(PROC_DATA,
   sprintf("scope1_dispersion_pi_%s.RData", WEIGHT_SCHEME))
-save(disp_point, disp_draws, disp_summary,
-     WEIGHT_SCHEME, MIN_N_STATS, stat_cols,
-     file = OUT_PATH)
+save(
+  disp_point_2d,  disp_draws_2d,  disp_summary_2d,
+  disp_point_5d,  disp_draws_5d,  disp_summary_5d,
+  disp_point_crf, disp_draws_crf, disp_summary_crf,
+  WEIGHT_SCHEME, MIN_N_STATS, stat_cols,
+  file = OUT_PATH
+)
 
 cat(sprintf("\n===================================================================\n"))
 cat("Saved:", OUT_PATH, "\n")
-cat(sprintf("  disp_point:   %d sector-years (deterministic)\n", nrow(disp_point)))
-cat(sprintf("  disp_draws:   %d draw x sector-years\n", nrow(disp_draws)))
-cat(sprintf("  disp_summary: %d sector-years with PIs\n", nrow(disp_summary)))
+cat(sprintf("  2d  — point: %d | draws: %d | summary: %d\n",
+            nrow(disp_point_2d),  nrow(disp_draws_2d),  nrow(disp_summary_2d)))
+cat(sprintf("  5d  — point: %d | draws: %d | summary: %d\n",
+            nrow(disp_point_5d),  nrow(disp_draws_5d),  nrow(disp_summary_5d)))
+cat(sprintf("  crf — point: %d | draws: %d | summary: %d\n",
+            nrow(disp_point_crf), nrow(disp_draws_crf), nrow(disp_summary_crf)))
 cat("===================================================================\n")
