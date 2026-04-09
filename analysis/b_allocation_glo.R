@@ -74,14 +74,16 @@ suppressPackageStartupMessages({
 })
 
 # -- Parameters ---------------------------------------------------------------
-YEARS <- 2005:2021
+YEARS         <- 2005:2021
+WEIGHT_SCHEME <- "balanced"
 
-OUT_DIR <- file.path(PROC_DATA, "allocation_glo")
+OUT_DIR <- file.path(PROC_DATA, sprintf("allocation_glo_%s", WEIGHT_SCHEME))
 if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
 
 cat("===================================================================\n")
 cat("  GLO EMISSION ALLOCATION (single GLO, single allocation)\n")
 cat("  Years:", min(YEARS), "--", max(YEARS), "\n")
+cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
 cat("===================================================================\n\n")
 
 
@@ -134,10 +136,14 @@ cat("  GLO params: xi =", round(glo_par["xi"], 4),
     " k =", round(glo_par["k"], 4), "\n")
 
 load(file.path(PROC_DATA, "extensive_margin_calibration.RData"))
-cat("  ext logistic: alpha =", round(ext_coefs["alpha"], 3),
-    " beta_p =", round(ext_coefs["beta_p"], 3),
-    " beta_lp =", round(ext_coefs["beta_lp"], 3), "\n")
-cat("  q_star_pooled =", round(q_star_pooled, 4), "\n\n")
+stopifnot(WEIGHT_SCHEME %in% SCHEMES)
+sch_coefs       <- ext_coefs[[WEIGHT_SCHEME]]
+sch_q_function  <- ext_q_function[[WEIGHT_SCHEME]]
+sch_q_star      <- q_star_pooled[[WEIGHT_SCHEME]]
+cat("  ext logistic [", WEIGHT_SCHEME, "]: alpha =", round(sch_coefs["alpha"], 3),
+    " beta_p =", round(sch_coefs["beta_p"], 3),
+    " beta_lp =", round(sch_coefs["beta_lp"], 3), "\n")
+cat("  q_star_pooled =", round(sch_q_star, 4), "\n\n")
 
 
 # =============================================================================
@@ -379,11 +385,11 @@ for (t in YEARS) {
 
   # ---- Imputed candidates: deployment firms with Dhat_i = 1 ----
   # Dhat_i = 1{q_i >= q_star_pooled}, where q_i comes from the logistic
-  # on (p_i, log(1+proxy_mean_i)).
+  # on (p_i, log(1+proxy_mean_i)) for the chosen weighting scheme.
   proxy_t <- proxy_summary[proxy_summary$year == t, ]
-  proxy_t$q_i <- ext_q_function(proxy_t$p_i, proxy_t$proxy_mean_i)
+  proxy_t$q_i <- sch_q_function(proxy_t$p_i, proxy_t$proxy_mean_i)
   imputed_t <- proxy_t %>%
-    filter(q_i >= q_star_pooled, !(vat %in% pre_ets_t$vat)) %>%
+    filter(q_i >= sch_q_star, !(vat %in% pre_ets_t$vat)) %>%
     left_join(deploy_nace %>% select(vat, crf_group), by = "vat") %>%
     filter(!is.na(crf_group)) %>%
     select(vat, crf_group, p_i, proxy_mean_i, q_i)

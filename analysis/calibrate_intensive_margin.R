@@ -50,8 +50,14 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
 }
 source(file.path(REPO_DIR, "paths.R"))
 
+# -- Parameter ----------------------------------------------------------------
+# Which extensive-margin weighting scheme to consume.
+# Set to "balanced" (primary) or "unweighted" (robustness).
+WEIGHT_SCHEME <- "balanced"
+
 cat("===================================================================\n")
 cat("  INTENSIVE MARGIN CALIBRATION\n")
+cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
 cat("===================================================================\n\n")
 
 
@@ -62,14 +68,23 @@ cat("===================================================================\n\n")
 load(file.path(PROC_DATA, "training_summary_objects.RData"))
 load(file.path(PROC_DATA, "extensive_margin_calibration.RData"))
 
+stopifnot(WEIGHT_SCHEME %in% SCHEMES)
+
+# Pull the scheme-specific calibration objects
+sch_coefs       <- ext_coefs[[WEIGHT_SCHEME]]
+sch_loso_fits   <- loso_fits[[WEIGHT_SCHEME]]
+sch_loso_q_star <- loso_q_star[[WEIGHT_SCHEME]]
+sch_fit_pooled  <- ext_fit_pooled[[WEIGHT_SCHEME]]
+sch_q_star      <- q_star_pooled[[WEIGHT_SCHEME]]
+
 cat("Loaded training_summary (", nrow(training_summary), "rows)\n")
-cat("Logistic coefs:\n")
+cat("Logistic coefs (scheme =", WEIGHT_SCHEME, "):\n")
 cat(sprintf("  alpha = %.4f, beta_p = %.4f, beta_lp = %.4f\n",
-            ext_coefs["alpha"], ext_coefs["beta_p"], ext_coefs["beta_lp"]))
+            sch_coefs["alpha"], sch_coefs["beta_p"], sch_coefs["beta_lp"]))
 cat("LOSO q*:\n")
 for (s in MIXED_CRFS)
-  cat(sprintf("  %s = %.4f\n", s, loso_q_star[s]))
-cat(sprintf("Pooled q* (used for non-mixed CRFs) = %.4f\n\n", q_star_pooled))
+  cat(sprintf("  %s = %.4f\n", s, sch_loso_q_star[s]))
+cat(sprintf("Pooled q* (used for non-mixed CRFs) = %.4f\n\n", sch_q_star))
 
 
 # =============================================================================
@@ -87,19 +102,19 @@ ts$Dhat <- NA_integer_
 for (s in MIXED_CRFS) {
   idx <- which(ts$primary_crf_group == s)
   if (length(idx) == 0) next
-  q_idx <- predict(loso_fits[[s]],
+  q_idx <- predict(sch_loso_fits[[s]],
                     newdata = ts[idx, c("p_i", "lp")],
                     type = "response")
-  ts$Dhat[idx] <- as.integer(q_idx >= loso_q_star[s])
+  ts$Dhat[idx] <- as.integer(q_idx >= sch_loso_q_star[s])
 }
 
 # Non-mixed CRFs: pooled fit
 nm_idx <- which(!(ts$primary_crf_group %in% MIXED_CRFS))
 if (length(nm_idx) > 0) {
-  q_nm <- predict(ext_fit_pooled,
+  q_nm <- predict(sch_fit_pooled,
                    newdata = ts[nm_idx, c("p_i", "lp")],
                    type = "response")
-  ts$Dhat[nm_idx] <- as.integer(q_nm >= q_star_pooled)
+  ts$Dhat[nm_idx] <- as.integer(q_nm >= sch_q_star)
 }
 
 # Restrict to true emitters
@@ -231,9 +246,10 @@ int_diagnostics <- list(
 # SECTION 7: Save
 # =============================================================================
 
-OUT_PATH <- file.path(PROC_DATA, "intensive_margin_calibration.RData")
+OUT_PATH <- file.path(PROC_DATA,
+  sprintf("intensive_margin_calibration_%s.RData", WEIGHT_SCHEME))
 save(mean_coefs, sigma_const, branch_b_z, mean_fit,
-     int_diagnostics, file = OUT_PATH)
+     int_diagnostics, WEIGHT_SCHEME, file = OUT_PATH)
 
 cat("\n===================================================================\n")
 cat("Saved:", OUT_PATH, "\n")

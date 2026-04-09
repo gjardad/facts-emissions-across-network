@@ -38,6 +38,9 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
 }
 source(file.path(REPO_DIR, "paths.R"))
 
+# -- Parameter ----------------------------------------------------------------
+WEIGHT_SCHEME <- "balanced"
+
 suppressPackageStartupMessages({
   library(dplyr)
   library(data.table)
@@ -45,6 +48,7 @@ suppressPackageStartupMessages({
 
 cat("===================================================================\n")
 cat("  REPORT UNCERTAINTY: build firm-year prediction intervals\n")
+cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
 cat("===================================================================\n\n")
 
 
@@ -52,7 +56,7 @@ cat("===================================================================\n\n")
 # SECTION 1: List draw files
 # =============================================================================
 
-DRAW_DIR <- file.path(PROC_DATA, "uncertainty_draws")
+DRAW_DIR <- file.path(PROC_DATA, sprintf("uncertainty_draws_%s", WEIGHT_SCHEME))
 draw_files <- sort(list.files(DRAW_DIR, pattern = "^draw_\\d+\\.RData$",
                                full.names = TRUE))
 B <- length(draw_files)
@@ -183,8 +187,9 @@ cat(sprintf("  PI width (95%%): median = %.0f\n",
 # SECTION 5: Save
 # =============================================================================
 
-OUT_PATH <- file.path(PROC_DATA, "firm_year_pi.RData")
-save(firm_year_pi, B, file = OUT_PATH)
+OUT_PATH <- file.path(PROC_DATA,
+  sprintf("firm_year_pi_%s.RData", WEIGHT_SCHEME))
+save(firm_year_pi, B, WEIGHT_SCHEME, file = OUT_PATH)
 
 cat("\n===================================================================\n")
 cat("Saved:", OUT_PATH, "\n")

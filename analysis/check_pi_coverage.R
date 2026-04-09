@@ -38,8 +38,12 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
 }
 source(file.path(REPO_DIR, "paths.R"))
 
+# -- Parameter ----------------------------------------------------------------
+WEIGHT_SCHEME <- "balanced"
+
 cat("===================================================================\n")
 cat("  COVERAGE CHECK: branch A latent-normal model in z-space\n")
+cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
 cat("===================================================================\n\n")
 
 
@@ -49,7 +53,14 @@ cat("===================================================================\n\n")
 
 load(file.path(PROC_DATA, "training_summary_objects.RData"))
 load(file.path(PROC_DATA, "extensive_margin_calibration.RData"))
-load(file.path(PROC_DATA, "intensive_margin_calibration.RData"))
+load(file.path(PROC_DATA,
+  sprintf("intensive_margin_calibration_%s.RData", WEIGHT_SCHEME)))
+
+stopifnot(WEIGHT_SCHEME %in% SCHEMES)
+sch_loso_fits   <- loso_fits[[WEIGHT_SCHEME]]
+sch_loso_q_star <- loso_q_star[[WEIGHT_SCHEME]]
+sch_fit_pooled  <- ext_fit_pooled[[WEIGHT_SCHEME]]
+sch_q_star      <- q_star_pooled[[WEIGHT_SCHEME]]
 
 cat("Loaded calibration objects.\n")
 cat(sprintf("  mean: a = %.4f, b = %.4f\n", mean_coefs["a"], mean_coefs["b"]))
@@ -67,18 +78,18 @@ ts$Dhat <- NA_integer_
 for (s in MIXED_CRFS) {
   idx <- which(ts$primary_crf_group == s)
   if (length(idx) == 0) next
-  q_idx <- predict(loso_fits[[s]],
+  q_idx <- predict(sch_loso_fits[[s]],
                     newdata = ts[idx, c("p_i", "lp")],
                     type = "response")
-  ts$Dhat[idx] <- as.integer(q_idx >= loso_q_star[s])
+  ts$Dhat[idx] <- as.integer(q_idx >= sch_loso_q_star[s])
 }
 
 nm_idx <- which(!(ts$primary_crf_group %in% MIXED_CRFS))
 if (length(nm_idx) > 0) {
-  q_nm <- predict(ext_fit_pooled,
+  q_nm <- predict(sch_fit_pooled,
                    newdata = ts[nm_idx, c("p_i", "lp")],
                    type = "response")
-  ts$Dhat[nm_idx] <- as.integer(q_nm >= q_star_pooled)
+  ts$Dhat[nm_idx] <- as.integer(q_nm >= sch_q_star)
 }
 
 emit <- ts[ts$D_i == 1, ]
@@ -189,8 +200,9 @@ print(binned_df, row.names = FALSE)
 # SECTION 7: Save
 # =============================================================================
 
-OUT_PATH <- file.path(PROC_DATA, "coverage_check.RData")
-save(cov_results, binned_df, br_a, file = OUT_PATH)
+OUT_PATH <- file.path(PROC_DATA,
+  sprintf("coverage_check_%s.RData", WEIGHT_SCHEME))
+save(cov_results, binned_df, br_a, WEIGHT_SCHEME, file = OUT_PATH)
 
 cat("\n===================================================================\n")
 cat("Saved:", OUT_PATH, "\n")

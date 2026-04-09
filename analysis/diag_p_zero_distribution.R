@@ -24,11 +24,15 @@ if (tolower(Sys.info()[["user"]]) == "jardang") {
 }
 source(file.path(REPO_DIR, "paths.R"))
 
+# -- Parameter ----------------------------------------------------------------
+WEIGHT_SCHEME <- "balanced"
+
 cat("===================================================================\n")
 cat("  P_ZERO DISTRIBUTION FOR IMPUTED FIRM-YEARS\n")
+cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
 cat("===================================================================\n\n")
 
-load(file.path(PROC_DATA, "firm_year_pi.RData"))
+load(file.path(PROC_DATA, sprintf("firm_year_pi_%s.RData", WEIGHT_SCHEME)))
 
 imp <- firm_year_pi[firm_year_pi$source == "imputed", ]
 cat("Imputed firm-years:", nrow(imp), "\n\n")
@@ -67,7 +71,7 @@ cat(sprintf("=> Confident emitters (p_zero <= 0.20): %d firm-years\n",
 FIG_DIR <- file.path(OUTPUT_DIR, "figures")
 if (!dir.exists(FIG_DIR)) dir.create(FIG_DIR, recursive = TRUE)
 
-OUT_PNG <- file.path(FIG_DIR, "p_zero_histogram.png")
+OUT_PNG <- file.path(FIG_DIR, sprintf("p_zero_histogram_%s.png", WEIGHT_SCHEME))
 
 png(OUT_PNG, width = 1000, height = 700, res = 120)
 par(mar = c(5, 5, 4, 2))
@@ -75,7 +79,8 @@ hist(imp$p_zero,
      breaks = seq(0, 1, by = 0.025),
      col    = "#4477aa",
      border = "white",
-     main   = "Distribution of p_zero across imputed firm-years",
+     main   = sprintf("Distribution of p_zero across imputed firm-years (%s)",
+                       WEIGHT_SCHEME),
      xlab   = "p_zero (fraction of B=200 draws with zero emissions)",
      ylab   = "Firm-year count",
      cex.axis = 1.0, cex.lab = 1.1, cex.main = 1.2)
