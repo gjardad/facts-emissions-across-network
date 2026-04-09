@@ -12,7 +12,8 @@
 #   For each (CRF group x year) cell:
 #     1. Pre-ETS backcast (lifted from b_allocation_pareto.R).
 #     2. NIR calibration: E_deploy = E_NIR - E_ETS - E_pre_ets.
-#     3. Baseline emitter classification: Dhat_i = 1{p_i >= tau_star}.
+#     3. Baseline emitter classification: Dhat_i = 1{q_i >= q_star_pooled},
+#        where q_i is from the logistic on (p_i, log(1+proxy_mean_i)).
 #     4. Joint within-cell ranking (rank 1 = highest):
 #          a. true ETS firms ranked by observed emissions (desc)
 #          b. pre-ETS firms ranked by backcasted emissions (desc)
@@ -33,7 +34,7 @@
 #   {PROC_DATA}/deployment_panel.RData          (provides nace5d for non-ETS)
 #   {PROC_DATA}/nir_calibration_targets.RData
 #   {PROC_DATA}/glo_reference_params.RData
-#   {PROC_DATA}/pooled_youden_tau.RData
+#   {PROC_DATA}/extensive_margin_calibration.RData
 #   {REPO_DIR}/preprocess/crosswalks/nace_crf_crosswalk.csv
 #
 # NACE source for the CRF mapping:
@@ -132,8 +133,11 @@ cat("  GLO params: xi =", round(glo_par["xi"], 4),
     " alpha =", round(glo_par["alpha"], 4),
     " k =", round(glo_par["k"], 4), "\n")
 
-load(file.path(PROC_DATA, "pooled_youden_tau.RData"))
-cat("  tau_star (pooled-mixed Youden) =", round(tau_star, 4), "\n\n")
+load(file.path(PROC_DATA, "extensive_margin_calibration.RData"))
+cat("  ext logistic: alpha =", round(ext_coefs["alpha"], 3),
+    " beta_p =", round(ext_coefs["beta_p"], 3),
+    " beta_lp =", round(ext_coefs["beta_lp"], 3), "\n")
+cat("  q_star_pooled =", round(q_star_pooled, 4), "\n\n")
 
 
 # =============================================================================
@@ -374,12 +378,15 @@ for (t in YEARS) {
   pre_ets_t <- pre_ets[pre_ets$year == t, c("vat", "emissions", "crf_group")]
 
   # ---- Imputed candidates: deployment firms with Dhat_i = 1 ----
+  # Dhat_i = 1{q_i >= q_star_pooled}, where q_i comes from the logistic
+  # on (p_i, log(1+proxy_mean_i)).
   proxy_t <- proxy_summary[proxy_summary$year == t, ]
+  proxy_t$q_i <- ext_q_function(proxy_t$p_i, proxy_t$proxy_mean_i)
   imputed_t <- proxy_t %>%
-    filter(p_i >= tau_star, !(vat %in% pre_ets_t$vat)) %>%
+    filter(q_i >= q_star_pooled, !(vat %in% pre_ets_t$vat)) %>%
     left_join(deploy_nace %>% select(vat, crf_group), by = "vat") %>%
     filter(!is.na(crf_group)) %>%
-    select(vat, crf_group, p_i, proxy_mean_i)
+    select(vat, crf_group, p_i, proxy_mean_i, q_i)
 
   # ---- E_deploy by CRF group for this year ----
   E_dep_t <- E_deploy_panel[E_deploy_panel$year == t,

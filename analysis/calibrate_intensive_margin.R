@@ -60,25 +60,47 @@ cat("===================================================================\n\n")
 # =============================================================================
 
 load(file.path(PROC_DATA, "training_summary_objects.RData"))
-load(file.path(PROC_DATA, "threshold_calibration.RData"))
+load(file.path(PROC_DATA, "extensive_margin_calibration.RData"))
 
 cat("Loaded training_summary (", nrow(training_summary), "rows)\n")
-cat("Thresholds:\n")
-cat(sprintf("  tau_loso[paper]    = %.4f\n", tau_loso["paper"]))
-cat(sprintf("  tau_loso[refining] = %.4f\n", tau_loso["refining"]))
-cat(sprintf("  tau_loso[metals]   = %.4f\n", tau_loso["metals"]))
-cat(sprintf("  tau_pooled_mixed   = %.4f\n\n", tau_pooled_mixed))
+cat("Logistic coefs:\n")
+cat(sprintf("  alpha = %.4f, beta_p = %.4f, beta_lp = %.4f\n",
+            ext_coefs["alpha"], ext_coefs["beta_p"], ext_coefs["beta_lp"]))
+cat("LOSO q*:\n")
+for (s in MIXED_CRFS)
+  cat(sprintf("  %s = %.4f\n", s, loso_q_star[s]))
+cat(sprintf("Pooled q* (used for non-mixed CRFs) = %.4f\n\n", q_star_pooled))
 
 
 # =============================================================================
 # SECTION 2: Assign Dhat_i
 # =============================================================================
+#
+# For mixed-CRF observations: use the LOSO logistic for that fold (the fit
+# trained on the OTHER two mixed CRFs), and the LOSO q* for that fold.
+# For non-mixed-CRF observations: use the pooled-mixed logistic and pooled q*.
 
 ts <- training_summary
-ts$tau <- ifelse(ts$primary_crf_group %in% MIXED_CRFS,
-                  unname(tau_loso[as.character(ts$primary_crf_group)]),
-                  tau_pooled_mixed)
-ts$Dhat <- as.integer(ts$p_i >= ts$tau)
+ts$lp <- log1p(pmax(ts$proxy_mean_i, 0))
+ts$Dhat <- NA_integer_
+
+for (s in MIXED_CRFS) {
+  idx <- which(ts$primary_crf_group == s)
+  if (length(idx) == 0) next
+  q_idx <- predict(loso_fits[[s]],
+                    newdata = ts[idx, c("p_i", "lp")],
+                    type = "response")
+  ts$Dhat[idx] <- as.integer(q_idx >= loso_q_star[s])
+}
+
+# Non-mixed CRFs: pooled fit
+nm_idx <- which(!(ts$primary_crf_group %in% MIXED_CRFS))
+if (length(nm_idx) > 0) {
+  q_nm <- predict(ext_fit_pooled,
+                   newdata = ts[nm_idx, c("p_i", "lp")],
+                   type = "response")
+  ts$Dhat[nm_idx] <- as.integer(q_nm >= q_star_pooled)
+}
 
 # Restrict to true emitters
 emit <- ts[ts$D_i == 1, ]

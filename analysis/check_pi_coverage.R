@@ -48,7 +48,7 @@ cat("===================================================================\n\n")
 # =============================================================================
 
 load(file.path(PROC_DATA, "training_summary_objects.RData"))
-load(file.path(PROC_DATA, "threshold_calibration.RData"))
+load(file.path(PROC_DATA, "extensive_margin_calibration.RData"))
 load(file.path(PROC_DATA, "intensive_margin_calibration.RData"))
 
 cat("Loaded calibration objects.\n")
@@ -61,10 +61,25 @@ cat(sprintf("  sigma (constant): %.4f\n\n", sigma_const))
 # =============================================================================
 
 ts <- training_summary
-ts$tau <- ifelse(ts$primary_crf_group %in% MIXED_CRFS,
-                  unname(tau_loso[as.character(ts$primary_crf_group)]),
-                  tau_pooled_mixed)
-ts$Dhat <- as.integer(ts$p_i >= ts$tau)
+ts$lp <- log1p(pmax(ts$proxy_mean_i, 0))
+ts$Dhat <- NA_integer_
+
+for (s in MIXED_CRFS) {
+  idx <- which(ts$primary_crf_group == s)
+  if (length(idx) == 0) next
+  q_idx <- predict(loso_fits[[s]],
+                    newdata = ts[idx, c("p_i", "lp")],
+                    type = "response")
+  ts$Dhat[idx] <- as.integer(q_idx >= loso_q_star[s])
+}
+
+nm_idx <- which(!(ts$primary_crf_group %in% MIXED_CRFS))
+if (length(nm_idx) > 0) {
+  q_nm <- predict(ext_fit_pooled,
+                   newdata = ts[nm_idx, c("p_i", "lp")],
+                   type = "response")
+  ts$Dhat[nm_idx] <- as.integer(q_nm >= q_star_pooled)
+}
 
 emit <- ts[ts$D_i == 1, ]
 br_a <- emit[emit$Dhat == 1, ]
