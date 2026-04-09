@@ -79,8 +79,8 @@ sch_q_star      <- q_star_pooled[[WEIGHT_SCHEME]]
 
 cat("Loaded training_summary (", nrow(training_summary), "rows)\n")
 cat("Logistic coefs (scheme =", WEIGHT_SCHEME, "):\n")
-cat(sprintf("  alpha = %.4f, beta_p = %.4f, beta_lp = %.4f\n",
-            sch_coefs["alpha"], sch_coefs["beta_p"], sch_coefs["beta_lp"]))
+cat(sprintf("  alpha = %.4f, beta_p = %.4f, beta_ap = %.4f\n",
+            sch_coefs["alpha"], sch_coefs["beta_p"], sch_coefs["beta_ap"]))
 cat("LOSO q*:\n")
 for (s in MIXED_CRFS)
   cat(sprintf("  %s = %.4f\n", s, sch_loso_q_star[s]))
@@ -96,14 +96,14 @@ cat(sprintf("Pooled q* (used for non-mixed CRFs) = %.4f\n\n", sch_q_star))
 # For non-mixed-CRF observations: use the pooled-mixed logistic and pooled q*.
 
 ts <- training_summary
-ts$lp <- log1p(pmax(ts$proxy_mean_i, 0))
+ts$ap <- asinh(ts$proxy_mean_i)
 ts$Dhat <- NA_integer_
 
 for (s in MIXED_CRFS) {
   idx <- which(ts$primary_crf_group == s)
   if (length(idx) == 0) next
   q_idx <- predict(sch_loso_fits[[s]],
-                    newdata = ts[idx, c("p_i", "lp")],
+                    newdata = ts[idx, c("p_i", "ap")],
                     type = "response")
   ts$Dhat[idx] <- as.integer(q_idx >= sch_loso_q_star[s])
 }
@@ -112,7 +112,7 @@ for (s in MIXED_CRFS) {
 nm_idx <- which(!(ts$primary_crf_group %in% MIXED_CRFS))
 if (length(nm_idx) > 0) {
   q_nm <- predict(sch_fit_pooled,
-                   newdata = ts[nm_idx, c("p_i", "lp")],
+                   newdata = ts[nm_idx, c("p_i", "ap")],
                    type = "response")
   ts$Dhat[nm_idx] <- as.integer(q_nm >= sch_q_star)
 }

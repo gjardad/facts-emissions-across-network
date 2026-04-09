@@ -114,7 +114,7 @@ sch_q_function  <- ext_q_function[[WEIGHT_SCHEME]]
 sch_q_star      <- q_star_pooled[[WEIGHT_SCHEME]]
 cat("  ext logistic [", WEIGHT_SCHEME, "]: alpha =", round(sch_coefs["alpha"], 3),
     " beta_p =", round(sch_coefs["beta_p"], 3),
-    " beta_lp =", round(sch_coefs["beta_lp"], 3), "\n")
+    " beta_ap =", round(sch_coefs["beta_ap"], 3), "\n")
 cat("  q_star_pooled =", round(sch_q_star, 4), "\n")
 
 load(file.path(PROC_DATA,

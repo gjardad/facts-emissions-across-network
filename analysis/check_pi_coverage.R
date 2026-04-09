@@ -72,14 +72,14 @@ cat(sprintf("  sigma (constant): %.4f\n\n", sigma_const))
 # =============================================================================
 
 ts <- training_summary
-ts$lp <- log1p(pmax(ts$proxy_mean_i, 0))
+ts$ap <- asinh(ts$proxy_mean_i)
 ts$Dhat <- NA_integer_
 
 for (s in MIXED_CRFS) {
   idx <- which(ts$primary_crf_group == s)
   if (length(idx) == 0) next
   q_idx <- predict(sch_loso_fits[[s]],
-                    newdata = ts[idx, c("p_i", "lp")],
+                    newdata = ts[idx, c("p_i", "ap")],
                     type = "response")
   ts$Dhat[idx] <- as.integer(q_idx >= sch_loso_q_star[s])
 }
@@ -87,7 +87,7 @@ for (s in MIXED_CRFS) {
 nm_idx <- which(!(ts$primary_crf_group %in% MIXED_CRFS))
 if (length(nm_idx) > 0) {
   q_nm <- predict(sch_fit_pooled,
-                   newdata = ts[nm_idx, c("p_i", "lp")],
+                   newdata = ts[nm_idx, c("p_i", "ap")],
                    type = "response")
   ts$Dhat[nm_idx] <- as.integer(q_nm >= sch_q_star)
 }

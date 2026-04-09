@@ -2,10 +2,10 @@
 # analysis/calibrate_extensive_margin.R
 #
 # PURPOSE
-#   Fit logistic regressions of true emitter status on (p_i, log(1+proxy_mean))
+#   Fit logistic regressions of true emitter status on (p_i, asinh(proxy_mean))
 #   on the mixed-CRF training subset:
 #
-#     logit Pr(D_i = 1) = alpha + beta_p * p_i + beta_lp * log(1 + proxy_mean_i)
+#     logit Pr(D_i = 1) = alpha + beta_p * p_i + beta_ap * asinh(proxy_mean_i)
 #
 #   Two weighting schemes are fit and saved side by side:
 #
@@ -28,7 +28,7 @@
 #   {PROC_DATA}/extensive_margin_calibration.RData
 #     Per scheme s in {"balanced", "unweighted"}, the saved object contains:
 #       ext_fit_pooled[[s]]    : glm fit on all mixed CRFs
-#       ext_coefs[[s]]         : named numeric (alpha, beta_p, beta_lp)
+#       ext_coefs[[s]]         : named numeric (alpha, beta_p, beta_ap)
 #       ext_q_function[[s]]    : function(p, proxy_mean) returning q
 #       q_star_pooled[[s]]     : Youden-optimal q* from the pooled fit
 #       loso_fits[[s]]         : list of glm fits per held-out mixed CRF
@@ -54,7 +54,7 @@ source(file.path(REPO_DIR, "paths.R"))
 
 cat("===================================================================\n")
 cat("  EXTENSIVE MARGIN CALIBRATION\n")
-cat("  logit Pr(D=1) = alpha + b_p * p_i + b_lp * log(1+proxy_mean)\n")
+cat("  logit Pr(D=1) = alpha + b_p * p_i + b_ap * asinh(proxy_mean)\n")
 cat("  Schemes: balanced (primary), unweighted (robustness)\n")
 cat("===================================================================\n\n")
 
@@ -69,7 +69,7 @@ MIXED_CRFS <- c("paper", "refining", "metals")
 SCHEMES    <- c("balanced", "unweighted")
 
 mixed <- training_summary[training_summary$primary_crf_group %in% MIXED_CRFS, ]
-mixed$lp <- log1p(pmax(mixed$proxy_mean_i, 0))
+mixed$ap <- asinh(mixed$proxy_mean_i)
 
 # CRF-balanced weights: each CRF gets equal total weight, normalized so the
 # sum of weights equals N (so coefficient SEs are on the same scale as the
@@ -128,11 +128,11 @@ calibrate_scheme <- function(scheme) {
   # ---- Pooled fit ----
   cat("-- Pooled fit on all mixed CRFs -------------------------------------\n")
   fit_pooled <- suppressWarnings(
-    glm(D_i ~ p_i + lp, data = mixed, weights = weights_vec,
+    glm(D_i ~ p_i + ap, data = mixed, weights = weights_vec,
         family = binomial(link = "logit"))
   )
   coefs <- coef(fit_pooled)
-  names(coefs) <- c("alpha", "beta_p", "beta_lp")
+  names(coefs) <- c("alpha", "beta_p", "beta_ap")
   cat("Coefficients:\n"); print(round(coefs, 4))
 
   q_pooled <- predict(fit_pooled, type = "response")
@@ -146,8 +146,8 @@ calibrate_scheme <- function(scheme) {
   q_function <- local({
     .coefs <- coefs
     function(p, proxy_mean) {
-      lp <- log1p(pmax(proxy_mean, 0))
-      eta <- .coefs["alpha"] + .coefs["beta_p"] * p + .coefs["beta_lp"] * lp
+      ap <- asinh(proxy_mean)
+      eta <- .coefs["alpha"] + .coefs["beta_p"] * p + .coefs["beta_ap"] * ap
       unname(plogis(eta))
     }
   })
@@ -185,7 +185,7 @@ calibrate_scheme <- function(scheme) {
     }
 
     fit <- suppressWarnings(
-      glm(D_i ~ p_i + lp, data = train, weights = tw,
+      glm(D_i ~ p_i + ap, data = train, weights = tw,
           family = binomial(link = "logit"))
     )
     loso_fits[[held_out]] <- fit
@@ -289,8 +289,8 @@ save(ext_fit_pooled, ext_coefs, ext_q_function,
 cat("\n===================================================================\n")
 cat("Saved:", OUT_PATH, "\n")
 for (s in SCHEMES) {
-  cat(sprintf("  [%s] alpha = %.3f, beta_p = %.3f, beta_lp = %.3f, q* = %.4f\n",
+  cat(sprintf("  [%s] alpha = %.3f, beta_p = %.3f, beta_ap = %.3f, q* = %.4f\n",
               s, ext_coefs[[s]]["alpha"], ext_coefs[[s]]["beta_p"],
-              ext_coefs[[s]]["beta_lp"], q_star_pooled[[s]]))
+              ext_coefs[[s]]["beta_ap"], q_star_pooled[[s]]))
 }
 cat("===================================================================\n")
