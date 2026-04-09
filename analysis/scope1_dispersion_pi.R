@@ -19,13 +19,14 @@
 # INPUT
 #   {PROC_DATA}/allocation_glo_<scheme>/alloc_YYYY.RData  (point estimate)
 #   {PROC_DATA}/uncertainty_draws_<scheme>/draw_BBBB.RData (B draws)
-#   {PROC_DATA}/annual_accounts_selected_sample_key_variables.RData
+#   {PROC_DATA}/deployment_panel.RData  (vat, year, nace5d, revenue)
 #
 # OUTPUT
 #   {PROC_DATA}/scope1_dispersion_pi_<scheme>.RData
-#     disp_point_*  : point-estimate dispersion by sector x year
+#     disp_point_*  : deterministic GLO allocation dispersion by sector x year
+#     disp_median_* : draw-median dispersion (centered within PIs) by sector x year
 #     disp_draws_*  : all B draw-level dispersion stats
-#     disp_summary_*: point estimate + 90%/95% PIs per sector-year
+#     disp_summary_*: deterministic + 90%/95% PIs per sector-year
 #     (* = 2d, 5d, crf for the three granularities)
 #
 # RUNS ON: local 1
@@ -70,13 +71,13 @@ cat("===================================================================\n\n")
 
 cat("-- Loading accounts -------------------------------------------------\n")
 
-load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData"))
-accounts <- df_annual_accounts_selected_sample_key_variables %>%
+load(file.path(PROC_DATA, "deployment_panel.RData"))
+accounts <- deployment_panel %>%
   filter(year %in% YEARS) %>%
   select(vat, year, nace5d, revenue) %>%
   mutate(nace2d  = make_nace2d(nace5d),
          revenue = pmax(coalesce(revenue, 0), 0))
-rm(df_annual_accounts_selected_sample_key_variables)
+rm(deployment_panel)
 setDT(accounts)
 
 # CRF crosswalk: nace2d -> crf_group
@@ -279,6 +280,18 @@ disp_summary_crf <- merge(build_pi(disp_draws_crf, "crf_group"), disp_point_crf,
 cat(sprintf("  Summary — 2d: %d | 5d: %d | crf: %d sector-years with PIs\n\n",
             nrow(disp_summary_2d), nrow(disp_summary_5d), nrow(disp_summary_crf)))
 
+# Extract draw medians as standalone tables (same column names as disp_point_*)
+extract_medians <- function(pi_dt, group_col) {
+  med_cols <- paste0(stat_cols, "_median")
+  out <- pi_dt[, c(group_col, "year", med_cols), with = FALSE]
+  setnames(out, med_cols, stat_cols)
+  out
+}
+
+disp_median_2d  <- extract_medians(build_pi(disp_draws_2d,  "nace2d"),    "nace2d")
+disp_median_5d  <- extract_medians(build_pi(disp_draws_5d,  "nace5d"),    "nace5d")
+disp_median_crf <- extract_medians(build_pi(disp_draws_crf, "crf_group"), "crf_group")
+
 
 # =============================================================================
 # SECTION 6: Diagnostics
@@ -310,19 +323,19 @@ cat(sprintf("  Median: %.4f\n", median(disp_summary_2d$gini_width, na.rm = TRUE)
 OUT_PATH <- file.path(PROC_DATA,
   sprintf("scope1_dispersion_pi_%s.RData", WEIGHT_SCHEME))
 save(
-  disp_point_2d,  disp_draws_2d,  disp_summary_2d,
-  disp_point_5d,  disp_draws_5d,  disp_summary_5d,
-  disp_point_crf, disp_draws_crf, disp_summary_crf,
+  disp_point_2d,  disp_median_2d,  disp_draws_2d,  disp_summary_2d,
+  disp_point_5d,  disp_median_5d,  disp_draws_5d,  disp_summary_5d,
+  disp_point_crf, disp_median_crf, disp_draws_crf, disp_summary_crf,
   WEIGHT_SCHEME, MIN_N_STATS, stat_cols,
   file = OUT_PATH
 )
 
 cat(sprintf("\n===================================================================\n"))
 cat("Saved:", OUT_PATH, "\n")
-cat(sprintf("  2d  — point: %d | draws: %d | summary: %d\n",
-            nrow(disp_point_2d),  nrow(disp_draws_2d),  nrow(disp_summary_2d)))
-cat(sprintf("  5d  — point: %d | draws: %d | summary: %d\n",
-            nrow(disp_point_5d),  nrow(disp_draws_5d),  nrow(disp_summary_5d)))
-cat(sprintf("  crf — point: %d | draws: %d | summary: %d\n",
-            nrow(disp_point_crf), nrow(disp_draws_crf), nrow(disp_summary_crf)))
+cat(sprintf("  2d  — point: %d | median: %d | draws: %d | summary: %d\n",
+            nrow(disp_point_2d),  nrow(disp_median_2d),  nrow(disp_draws_2d),  nrow(disp_summary_2d)))
+cat(sprintf("  5d  — point: %d | median: %d | draws: %d | summary: %d\n",
+            nrow(disp_point_5d),  nrow(disp_median_5d),  nrow(disp_draws_5d),  nrow(disp_summary_5d)))
+cat(sprintf("  crf — point: %d | median: %d | draws: %d | summary: %d\n",
+            nrow(disp_point_crf), nrow(disp_median_crf), nrow(disp_draws_crf), nrow(disp_summary_crf)))
 cat("===================================================================\n")

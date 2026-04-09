@@ -117,7 +117,24 @@ The full training sample (`training_sample.RData``) are NOT downsampled and are 
 Access to the full NBB data is restricted to RMD through a VPN connection. RMD doesn't have access to the web browser, but it is connected to GitHub. I can only use the VPN connection through local 2. Local 2 has regular access to the web browser. Local 1 is my personal desktop and it is where I have Claude code and cursor downloaded.
 When copying files from RMD to local 1, I first need to copy them to local 2, then from local 2 to the cloud (Dropbox/Claude), then from the Claude to local 1.
 In local 1 I have available a downsampled version of the full NBB data sets as well as the full training sample. I built the training sample in RMD and copied it to local 2.
-Any script that only requires `training_sample.RData` (e.g., CV scripts, alternative specs, rho comparisons) can be run locally on local 1. RMD is only needed for scripts that access the raw NBB data (e.g., preprocessing, proxy construction).**
+Any script that only requires `training_sample.RData` (e.g., CV scripts, alternative specs, rho comparisons) can be run locally on local 1. RMD is only needed for scripts that access the raw NBB data (e.g., preprocessing, proxy construction).
+
+Files transferred from RMD to local 1 (full-data, not downsampled):
+- `repeated_cv_proxy_crf_asinh.RData` — 200 CV repeats for training firms (M=200 × N=26,608)
+- `deployment_proxy_list.RData` — 200 EN repeats for deployment firms (M=200, ~345k firm-years per draw). Generated on RMD with full B2B data, transferred 2026-04-08. All downstream outputs on local 1 that derive from this file (uncertainty draws, GLO allocation, scope 1 dispersion) use the full-data proxies and are therefore production-quality, not downsampled.**
+
+### Preliminary Results: Scope 1 Carbon Productivity Dispersion (RQ1)
+
+We compute within-sector dispersion of scope 1 carbon productivity (revenue / scope 1 emissions) at three levels of aggregation: NACE 5-digit, NACE 2-digit, and CRF category. Point estimates come from the deterministic GLO allocation; prediction intervals from 200 perturbation draws. All inputs are full-data (deployment_panel.RData for revenue/NACE, allocation_glo_balanced for scope 1, uncertainty_draws_balanced for PIs). Results cover 2005-2021, all sectors (not restricted to manufacturing), all firm sizes.
+
+**Carbon productivity p90/p10 (median across sector-years, point estimate):**
+- NACE 5-digit: 23.0x (90-10 log diff: 3.24)
+- NACE 2-digit: 72.7x (90-10 log diff: 4.32)
+- CRF category: 147.0x (90-10 log diff: 5.03)
+
+**Comparison with the literature.** The most comparable benchmark is De Lyon & Dechezlepretre (2025, OECD WP 2025/24), who report carbon productivity p90/p10 of 24x averaged across 9 countries, within 3-digit NACE manufacturing industries (20+ employees, 10+ firms per cell). This is an unweighted average of the log 90-10 difference across industry-country-year cells, exponentiated. Their energy productivity p90/p10 by country (Figure 3.1) ranges from 12x (Croatia, Sweden) to 39x (Indonesia), with the Netherlands at 18x and France at 14x. For France specifically (Table 3.1), they show energy productivity p90/p10 declining from 17.5x at 2-digit to 12.2x at 4-digit — the same pattern of finer industries yielding less dispersion that we observe. Our NACE 5-digit result of 23x aligns closely with their 24x cross-country carbon productivity aggregate, despite differences in scope (we include all sectors and firm sizes, they restrict to manufacturing with 20+ employees) and in the emission measure (we include process emissions in scope 1, they measure energy-related CO2 only).
+
+Lyubich, Shapiro & Walker (2018) report a 90-10 log difference of 2.27 (p90/p10 of 9.7x) for CO2 productivity in US manufacturing at the 6-digit NAICS plant level. The lower dispersion is consistent with their much finer industry definition and plant-level (vs. firm-level) unit of analysis.
 
 ### Dropped year: 2022
 
