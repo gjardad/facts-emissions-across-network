@@ -227,7 +227,7 @@ for (t in YEARS) {
     cat(sprintf("Year %d — SKIPPED (file not found)\n", t))
     next
   }
-  load(up_path)  # firms_by_draw, conv_info, max_rowsum
+  load(up_path)  # firms_by_draw, max_rowsum
   B <- length(firms_by_draw)
 
   accounts_t <- accounts[accounts$year == t, ]
@@ -247,7 +247,7 @@ for (t in YEARS) {
 
   elapsed <- round(difftime(Sys.time(), t0_year, units = "secs"), 1)
   cat(sprintf("Year %d (%s s)\n", t, elapsed))
-  rm(firms_by_draw, conv_info, max_rowsum)
+  rm(firms_by_draw, max_rowsum)
   gc()
 }
 

@@ -173,7 +173,7 @@ for (t in YEARS) {
     cat(sprintf("  Year %d: SKIPPED (no upstream file)\n", t))
     next
   }
-  load(up_path)  # loads firms_by_draw, conv_info, max_rowsum
+  load(up_path)  # loads firms_by_draw, max_rowsum
 
   accounts_t <- accounts[year == t]
   n_draws <- length(firms_by_draw)
@@ -203,7 +203,7 @@ for (t in YEARS) {
   elapsed <- round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1)
   cat(sprintf("  Year %d: %d draws (%.1fs elapsed)\n", t, n_draws, elapsed))
 
-  rm(firms_by_draw, conv_info)
+  rm(firms_by_draw)
   gc()
 }
 

@@ -9,13 +9,14 @@
 #   For each year:
 #     1. Build A matrix from B2B (fixed across draws)
 #     2. Build cost_vec (fixed across draws)
-#     3. For each draw b = 0..B (b=0 = deterministic, b=1..B = perturbation):
+#     3. Factorize (I - A) once via sparse LU
+#     4. For each draw b = 0..B (b=0 = deterministic, b=1..B = perturbation):
 #        a. Build emission intensity vector eps_b from that draw's scope 1
-#        b. Neumann series: m = (I - A)^{-1} eps
+#        b. Direct solve: m = (I - A)^{-1} eps  (back-solve using LU)
 #        c. scope1_i = cost_i * eps_i; upstream_i = cost_i * (m_i - eps_i)
 #        d. Decompose upstream into across-sector and within-sector components
 #           at both NACE 2-digit and 5-digit granularity
-#     4. Save firm-level results per year
+#     5. Save firm-level results per year
 #
 # INPUT
 #   {PROC_DATA}/uncertainty_draws_<scheme>/draw_BBBB.RData (B perturbation draws)
@@ -33,7 +34,6 @@
 #                     upstream_within_2d, upstream_across_5d,
 #                     upstream_within_5d, upstream_across_crf,
 #                     upstream_within_crf, source
-#     conv_info     : convergence diagnostics per draw
 #     max_rowsum    : max row sum of A for this year
 #
 # RUNS ON: RMD (40 cores) or local 1 (downsampled, fewer cores)
@@ -61,8 +61,7 @@ library(foreach)
 # -- Parameters ---------------------------------------------------------------
 WEIGHT_SCHEME <- "balanced"
 YEARS         <- 2005:2021
-NEUMANN_MAXIT <- 50L
-NEUMANN_TOL   <- 1e-8
+SOLVER <- "direct"   # direct sparse LU solve of (I - A) x = eps
 
 # EU ETS annual average carbon price (EUR / tonne CO2), 2005-2021.
 CARBON_PRICE <- c(
@@ -87,8 +86,7 @@ if (!dir.exists(OUT_DIR)) dir.create(OUT_DIR, recursive = TRUE)
 cat("===================================================================\n")
 cat("  BUILD UPSTREAM EMISSIONS (GLO + uncertainty draws)\n")
 cat("  WEIGHT_SCHEME =", WEIGHT_SCHEME, "\n")
-cat("  Years:", min(YEARS), "--", max(YEARS),
-    "| Neumann tol:", NEUMANN_TOL, "| max iter:", NEUMANN_MAXIT, "\n")
+cat("  Years:", min(YEARS), "--", max(YEARS), "| Solver:", SOLVER, "\n")
 cat("  Cores:", N_CORES_SET, "\n")
 cat("===================================================================\n\n")
 
@@ -186,36 +184,15 @@ cat(sprintf("  Draws per year: %d (1 deterministic + %d perturbation)\n\n",
 
 
 # =============================================================================
-# SECTION 3: Neumann series helper
-# =============================================================================
-
-neumann_series <- function(A, epsilon, maxit, tol) {
-  m    <- as.numeric(epsilon)
-  term <- as.numeric(epsilon)
-  k_final  <- 0L
-  rel_final <- Inf
-
-  for (k in seq_len(maxit)) {
-    term      <- as.numeric(A %*% term)
-    m         <- m + term
-    rel_final <- max(abs(term)) / (max(abs(m)) + 1e-15)
-    k_final   <- k
-    if (rel_final < tol) break
-  }
-
-  list(m = m, k = k_final, converged = rel_final < tol, rel_err = rel_final)
-}
-
-
-# =============================================================================
-# SECTION 4: Main loop — year outer, draw inner (parallelized)
+# SECTION 3: Main loop — year outer, draw inner (parallelized)
+#   Factorize (I - A) once per year via sparse LU, then back-solve per draw.
 # =============================================================================
 cat("-- Main loop: years x draws ----------------------------------------\n\n")
 
 N_DRAWS_TOTAL <- B + 1L  # 1 deterministic + B perturbation
 N_CORES <- min(N_DRAWS_TOTAL, N_CORES_SET)
 
-conv_all <- list()
+diag_all <- list()
 t0_total <- Sys.time()
 
 for (t in YEARS) {
@@ -284,8 +261,10 @@ for (t in YEARS) {
   )
 
   max_rowsum <- max(rowSums(A))
-  if (max_rowsum >= 1)
-    cat(sprintf("\n  WARNING year %d: max row sum of A = %.4f >= 1\n", t, max_rowsum))
+
+  # -- Factorize (I - A) once for this year -----------------------------------
+  IminusA <- Diagonal(N) - A
+  LU      <- lu(IminusA)        # sparse LU factorization (reused across draws)
 
   # -- Sector vectors for upstream decomposition ------------------------------
   acc_match  <- match(all_vats, accounts_t$vat)
@@ -297,11 +276,9 @@ for (t in YEARS) {
   cl <- makeCluster(N_CORES)
   registerDoParallel(cl)
   clusterEvalQ(cl, { library(dplyr); library(Matrix) })
-  clusterExport(cl, c("A", "cost_vec", "all_vats",
+  clusterExport(cl, c("A", "LU", "cost_vec", "all_vats",
                        "nace2d_vec", "nace5d_vec", "crf_vec",
-                       "year_draws",
-                       "neumann_series",
-                       "NEUMANN_MAXIT", "NEUMANN_TOL"),
+                       "year_draws"),
                 envir = environment())
 
   n_draws <- length(year_draws)  # B + 1
@@ -320,14 +297,13 @@ for (t in YEARS) {
     source_vec <- rep("none", length(all_vats))
     source_vec[alloc_idx[ok_alloc]] <- alloc_b$source[ok_alloc]
 
-    # Neumann series
-    ns <- neumann_series(A, eps_b, NEUMANN_MAXIT, NEUMANN_TOL)
+    # Direct solve: m = (I - A)^{-1} eps
+    m_vec <- as.numeric(solve(LU, eps_b))
 
-    upstream_b <- pmax(cost_vec * (ns$m - eps_b), 0)
+    upstream_b <- pmax(cost_vec * (m_vec - eps_b), 0)
     scope1_b   <- cost_vec * eps_b
 
     # NACE 2-digit decomposition
-    m_vec <- ns$m
     m_bar_2d    <- m_vec
     has_nace_2d <- !is.na(nace2d_vec)
     if (any(has_nace_2d)) {
@@ -372,39 +348,26 @@ for (t in YEARS) {
     )
     firms_b <- firms_b[firms_b$scope1 > 0 | firms_b$upstream > 0, ]
 
-    list(
-      firms     = firms_b,
-      k         = ns$k,
-      rel_err   = ns$rel_err,
-      converged = ns$converged
-    )
+    list(firms = firms_b)
   }
 
   stopCluster(cl)
 
   # Collect results
-  firms_by_draw <- vector("list", n_draws)
-  conv_info     <- data.frame(draw = integer(n_draws), k = integer(n_draws),
-                              rel_err = numeric(n_draws), converged = logical(n_draws))
-  for (b in seq_len(n_draws)) {
-    firms_by_draw[[b]]     <- draw_results[[b]]$firms
-    conv_info$draw[b]      <- b - 1L  # 0 = deterministic, 1..B = perturbation
-    conv_info$k[b]         <- draw_results[[b]]$k
-    conv_info$rel_err[b]   <- draw_results[[b]]$rel_err
-    conv_info$converged[b] <- draw_results[[b]]$converged
-  }
+  firms_by_draw <- lapply(draw_results, `[[`, "firms")
 
   out_path <- file.path(OUT_DIR, sprintf("firms_%d.RData", t))
-  save(firms_by_draw, conv_info, max_rowsum, file = out_path)
+  save(firms_by_draw, max_rowsum, file = out_path)
 
-  conv_all[[length(conv_all) + 1L]] <- cbind(year = t, max_rowsum = max_rowsum,
-                                             conv_info)
+  diag_all[[length(diag_all) + 1L]] <- data.frame(
+    year = t, max_rowsum = max_rowsum, N = N, n_draws = n_draws
+  )
 
   elapsed <- round(difftime(Sys.time(), t0_year, units = "secs"), 1)
   n_firms_avg <- round(mean(sapply(firms_by_draw, nrow)))
   cat(sprintf("(%s s | ~%d firms/draw | %d draws)\n", elapsed, n_firms_avg, n_draws))
 
-  rm(year_draws)
+  rm(year_draws, LU, IminusA)
   gc()
 }
 
@@ -413,26 +376,18 @@ cat(sprintf("\nAll years complete in %.1f min\n\n", total_time))
 
 
 # =============================================================================
-# SECTION 5: Convergence summary
+# SECTION 4: Summary
 # =============================================================================
-conv_summary <- bind_rows(conv_all) %>%
-  group_by(year) %>%
-  summarise(
-    max_rowsum = first(max_rowsum),
-    med_k      = median(k),
-    max_k      = max(k),
-    pct_conv   = mean(converged) * 100,
-    .groups    = "drop"
-  )
+diag_summary <- bind_rows(diag_all)
 
-cat("-- Neumann convergence ----------------------------------------------\n")
-print(conv_summary)
+cat("-- Diagnostics ---------------------------------------------------------\n")
+print(diag_summary)
 
-save(conv_summary, file = file.path(OUT_DIR, "conv_summary.RData"))
+save(diag_summary, file = file.path(OUT_DIR, "diag_summary.RData"))
 
 cat(sprintf("\n===================================================================\n"))
 cat("Saved:", OUT_DIR, "\n")
 cat(sprintf("  %d year files (firms_YYYY.RData)\n", length(YEARS)))
-cat("  conv_summary.RData\n")
+cat("  diag_summary.RData\n")
 cat(sprintf("  Total time: %.1f min\n", total_time))
 cat("===================================================================\n")
