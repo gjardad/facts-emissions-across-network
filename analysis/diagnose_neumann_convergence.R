@@ -61,7 +61,9 @@ rm(firm_year_total_imports)
 cat("  Data loaded.\n\n")
 
 # ── Run diagnostic for multiple years ────────────────────────────────────────
-DIAG_YEARS <- c(2005, 2010, 2015, 2022)
+DIAG_YEARS   <- c(2005, 2010, 2015, 2021)
+CHECKPOINTS  <- c(50L, 100L, 200L, 300L, 500L)
+K_MAX        <- max(CHECKPOINTS)
 
 results <- list()
 
@@ -118,11 +120,7 @@ for (t in DIAG_YEARS) {
   )
 
   rs <- rowSums(A)
-  cat(sprintf("  N firms: %d\n", N))
-  cat(sprintf("  Max row sum: %.7f\n", max(rs)))
-  cat(sprintf("  Firms with row sum > 0.99: %d (%.1f%%)\n",
-              sum(rs > 0.99), 100 * mean(rs > 0.99)))
-  cat(sprintf("  Firms with row sum > 0.999: %d\n", sum(rs > 0.999)))
+  cat(sprintf("  N firms: %d | Max row sum: %.7f\n", N, max(rs)))
 
   # ETS emission intensities (no imputation — just ETS for diagnostic)
   eps <- rep(0, N)
@@ -130,57 +128,42 @@ for (t in DIAG_YEARS) {
   ok_ets <- !is.na(ets_idx) & !is.na(eutl_t$emissions) & eutl_t$emissions > 0
   eps[ets_idx[ok_ets]] <- eutl_t$emissions[ok_ets] / cost_vec[ets_idx[ok_ets]]
 
-  # Run Neumann to K=50
-  m_50 <- as.numeric(eps)
+  # Run Neumann with snapshots at each checkpoint
+  m    <- as.numeric(eps)
   term <- as.numeric(eps)
-  for (k in 1:50) {
+  snapshots <- list()
+
+  for (k in seq_len(K_MAX)) {
     term <- as.numeric(A %*% term)
-    m_50 <- m_50 + term
+    m    <- m + term
+    if (k %in% CHECKPOINTS) {
+      upstream_k <- pmax(cost_vec * (m - eps), 0)
+      snapshots[[as.character(k)]] <- sum(upstream_k)
+      cat(sprintf("    K=%3d done\n", k))
+    }
   }
 
-  # Continue to K=500
-  m_500 <- m_50
-  term_500 <- term
-  for (k in 51:500) {
-    term_500 <- as.numeric(A %*% term_500)
-    m_500 <- m_500 + term_500
+  # Reference = K_MAX
+  total_ref <- snapshots[[as.character(K_MAX)]]
+
+  cat(sprintf("\n  --- Cumulative upstream at each K (reference = K=%d) ---\n", K_MAX))
+  cat(sprintf("  %-6s  %15s  %10s  %10s\n", "K", "total_upstream", "pct_of_ref", "gap_pct"))
+
+  for (ck in CHECKPOINTS) {
+    total_k <- snapshots[[as.character(ck)]]
+    pct     <- 100 * total_k / total_ref
+    gap     <- 100 * (total_ref - total_k) / total_ref
+    cat(sprintf("  K=%-4d  %15.0f  %9.4f%%  %9.4f%%\n", ck, total_k, pct, gap))
+
+    results[[length(results) + 1L]] <- data.frame(
+      year = t, K = ck, total_upstream = total_k,
+      pct_of_ref = pct, gap_pct = gap
+    )
   }
-
-  # Compare upstream emissions
-  upstream_50  <- pmax(cost_vec * (m_50 - eps), 0)
-  upstream_500 <- pmax(cost_vec * (m_500 - eps), 0)
-
-  diff <- upstream_500 - upstream_50
-  has_up <- upstream_500 > 0
-  rel_diff <- ifelse(has_up, diff / upstream_500, 0)
-
-  total_50  <- sum(upstream_50)
-  total_500 <- sum(upstream_500)
-
-  cat(sprintf("\n  --- K=50 vs K=500 ---\n"))
-  cat(sprintf("  Total upstream (K=50):  %.0f tonnes\n", total_50))
-  cat(sprintf("  Total upstream (K=500): %.0f tonnes\n", total_500))
-  cat(sprintf("  Aggregate gap: %.4f%%\n", 100 * (total_500 - total_50) / total_500))
-  cat(sprintf("  Firm-level relative gap:\n"))
-  cat(sprintf("    Median: %.4f%%\n", 100 * median(rel_diff[has_up])))
-  cat(sprintf("    90th pctile: %.4f%%\n", 100 * quantile(rel_diff[has_up], 0.9)))
-  cat(sprintf("    99th pctile: %.4f%%\n", 100 * quantile(rel_diff[has_up], 0.99)))
-  cat(sprintf("    Max: %.2f%% (%.0f tonnes)\n", 100 * max(rel_diff), max(diff)))
-  cat(sprintf("  Firms with >1%% gap: %d\n\n", sum(rel_diff > 0.01)))
-
-  results[[as.character(t)]] <- data.frame(
-    year = t, N = N, max_rowsum = max(rs),
-    n_rs_gt99 = sum(rs > 0.99), n_rs_gt999 = sum(rs > 0.999),
-    total_up_50 = total_50, total_up_500 = total_500,
-    agg_gap_pct = 100 * (total_500 - total_50) / total_500,
-    median_gap_pct = 100 * median(rel_diff[has_up]),
-    p99_gap_pct = 100 * quantile(rel_diff[has_up], 0.99),
-    max_gap_pct = 100 * max(rel_diff),
-    n_gt1pct = sum(rel_diff > 0.01)
-  )
+  cat("\n")
 }
 
-cat("\n══════════════════════════════════════════════════════════════\n")
-cat("Summary across years:\n")
+cat("══════════════════════════════════════════════════════════════\n")
+cat("Summary:\n")
 print(bind_rows(results))
 cat("══════════════════════════════════════════════════════════════\n")
