@@ -60,7 +60,7 @@ library(foreach)
 
 # -- Parameters ---------------------------------------------------------------
 WEIGHT_SCHEME <- "balanced"
-YEARS         <- 2005:2021
+YEARS         <- 2005:2007   # TEST: set to 2005:2021 for full run
 SOLVER <- "direct"   # direct sparse LU solve of (I - A) x = eps
 
 # EU ETS annual average carbon price (EUR / tonne CO2), 2005-2021.
