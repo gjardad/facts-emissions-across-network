@@ -136,7 +136,7 @@ compute_upstream_stats <- function(firms_dt, group_col) {
       ok <- upstream > 0 & revenue > 0
       cp <- revenue[ok] / upstream[ok]
       if (length(cp) >= 2L) diff(quantile(log(cp), c(0.1, 0.9))) else NA_real_
-    },
+    }
   ), by = group_col][n_firms >= MIN_N_STATS]
 }
 
