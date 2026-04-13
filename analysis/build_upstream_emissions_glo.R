@@ -60,8 +60,11 @@ library(foreach)
 
 # -- Parameters ---------------------------------------------------------------
 WEIGHT_SCHEME <- "balanced"
-YEARS         <- 2005:2005   # TEST: set to 2005:2021 for full run
-NEUMANN_MAXIT <- 500L
+YEARS         <- 2005:2021
+NEUMANN_MAXIT <- 50L          # K=50 captures 99.98%+ of total upstream (see
+                               # diagnose_neumann_convergence.R: tested K up to
+                               # 500 on full data; worst-case gap is 0.019% at
+                               # K=50 in 2005, <0.001% by K=100)
 NEUMANN_TOL   <- 1e-8
 
 # EU ETS annual average carbon price (EUR / tonne CO2), 2005-2021.
