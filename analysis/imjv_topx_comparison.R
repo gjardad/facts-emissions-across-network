@@ -315,5 +315,78 @@ for (i in seq_len(nrow(tp_sorted))) {
 }
 
 cat("\n===================================================================\n")
+cat("  TOP-X% BY PROXY: CRF-year vs NACE2d-year\n")
+cat("===================================================================\n\n")
+
+# Add NACE2d to imputed firms from annual accounts
+alloc_imp_nace <- alloc_imp %>%
+  left_join(accounts %>% select(vat, year, nace5d = revenue),  # placeholder
+             by = c("vat", "year"))
+# Actually need nace5d from accounts — reload properly
+load(file.path(PROC_DATA, "annual_accounts_selected_sample_key_variables.RData"))
+aa_nace <- df_annual_accounts_selected_sample_key_variables %>%
+  select(vat, year, nace5d) %>%
+  mutate(nace2d = substr(nace5d, 1, 2))
+rm(df_annual_accounts_selected_sample_key_variables)
+
+alloc_imp <- alloc_imp %>%
+  left_join(aa_nace %>% select(vat, year, nace2d), by = c("vat", "year"))
+
+n_with_nace <- sum(!is.na(alloc_imp$nace2d))
+cat("Imputed firm-years with NACE2d:", n_with_nace, "/", nrow(alloc_imp),
+    "(", round(100 * n_with_nace / nrow(alloc_imp), 1), "%)\n\n")
+
+# Proxy percentile within NACE2d-year
+alloc_imp_n <- alloc_imp %>%
+  filter(!is.na(nace2d)) %>%
+  group_by(nace2d, year) %>%
+  mutate(
+    n_nace2d_yr = n(),
+    proxy_pctile_nace2d = rank(proxy_mean_i, ties.method = "average") / n()
+  ) %>%
+  ungroup()
+
+# Re-compute CRF percentile on same subset
+alloc_imp_n <- alloc_imp_n %>%
+  group_by(crf_group, year) %>%
+  mutate(
+    proxy_pctile_crf2 = rank(proxy_mean_i, ties.method = "average") / n()
+  ) %>%
+  ungroup()
+
+# Match IMJV TP
+tp_nace <- imjv_vy %>%
+  filter(vat_ano %in% non_ets_vats, year >= 2005, year <= 2021, imjv_co2_t > 0) %>%
+  inner_join(alloc_imp_n %>% select(vat, year, proxy_pctile_nace2d, proxy_pctile_crf2,
+                                      n_nace2d_yr, nace2d),
+             by = c("vat_ano" = "vat", "year"))
+# Keep only those also in scope1 > 0
+tp_nace <- tp_nace %>%
+  inner_join(alloc %>% filter(source == "imputed", scope1 > 0) %>%
+               select(vat, year) %>% rename(vat_ano = vat),
+             by = c("vat_ano", "year"))
+
+cat("TP firm-years with NACE2d:", nrow(tp_nace), "\n\n")
+
+if (nrow(tp_nace) > 0) {
+  cutoffs_n <- c(0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50)
+  cat(sprintf("%8s %18s %18s\n", "Top X%", "Proxy/CRF-yr", "Proxy/NACE2d-yr"))
+  cat(strrep("-", 48), "\n")
+  for (x in cutoffs_n) {
+    threshold <- 1 - x
+    n_crf  <- sum(tp_nace$proxy_pctile_crf2 >= threshold)
+    n_nace <- sum(tp_nace$proxy_pctile_nace2d >= threshold)
+    cat(sprintf("%7.0f%% %8d / %-4d %8d / %-4d\n",
+                x * 100,
+                n_crf, nrow(tp_nace),
+                n_nace, nrow(tp_nace)))
+  }
+  cat("\nNACE2d-year cell sizes for IMJV firms:\n")
+  cat("  Min:   ", min(tp_nace$n_nace2d_yr), "\n")
+  cat("  Median:", median(tp_nace$n_nace2d_yr), "\n")
+  cat("  Max:   ", max(tp_nace$n_nace2d_yr), "\n")
+}
+
+cat("\n===================================================================\n")
 cat("  Done.\n")
 cat("===================================================================\n")
