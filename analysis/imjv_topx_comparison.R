@@ -206,55 +206,91 @@ cat("  TOP-X% CLASSIFICATION COMPARISON\n")
 cat("  (restricted to firm-years with revenue and size bin: n =", n_complete, ")\n")
 cat("===================================================================\n\n")
 
-cat(sprintf("%8s %18s %18s %18s\n",
+# (d) Fourth rule: among top-half size bins only, classify top 2*X% by proxy.
+#     This targets the same overall share X of the full CRF-year population:
+#     half the firms are excluded (bottom size bins), and within the top half
+#     we take 2*X%, so the total classified share is 0.5 * 2*X = X.
+#     Idea: small firms don't emit; among large ones, proxy identifies emitters.
+n_size_bins <- 10
+top_half_bins <- seq(ceiling(n_size_bins / 2) + 1, n_size_bins)
+
+# Proxy percentile within CRF-year-size bin, restricted to top-half bins
+tp_complete <- tp_complete %>%
+  mutate(
+    in_top_half = size_bin %in% top_half_bins,
+    # For the fourth rule, we need proxy_pctile_bin (already computed)
+    # but only count it if in top half
+    proxy_pctile_top_half = ifelse(in_top_half, proxy_pctile_bin, NA_real_)
+  )
+
+cat(sprintf("%8s %15s %15s %15s %15s\n",
             "Top X%",
             "Proxy/CRF-yr",
-            "Revenue/CRF-yr",
-            "Proxy/CRF-yr-size"))
-cat(strrep("-", 66), "\n")
+            "Rev/CRF-yr",
+            "Proxy/size-bin",
+            "Proxy/top-half"))
+cat(strrep("-", 78), "\n")
 
 for (x in cutoffs) {
-  threshold <- 1 - x  # percentile threshold (e.g., top 10% = pctile >= 0.90)
-  n_proxy_crf  <- sum(tp_complete$proxy_pctile_crf >= threshold)
-  n_rev_crf    <- sum(tp_complete$rev_pctile_crf >= threshold, na.rm = TRUE)
-  n_proxy_bin  <- sum(tp_complete$proxy_pctile_bin >= threshold, na.rm = TRUE)
-  cat(sprintf("%7.0f%% %8d / %-4d %8d / %-4d %8d / %-4d\n",
+  threshold <- 1 - x
+  # For the fourth column: top 2*X% within each size bin, but only top-half bins
+  threshold_d <- 1 - min(2 * x, 1)
+  n_proxy_crf   <- sum(tp_complete$proxy_pctile_crf >= threshold)
+  n_rev_crf     <- sum(tp_complete$rev_pctile_crf >= threshold, na.rm = TRUE)
+  n_proxy_bin   <- sum(tp_complete$proxy_pctile_bin >= threshold, na.rm = TRUE)
+  n_proxy_top   <- sum(tp_complete$proxy_pctile_top_half >= threshold_d, na.rm = TRUE)
+  cat(sprintf("%7.0f%% %7d / %-4d %7d / %-4d %7d / %-4d %7d / %-4d\n",
               x * 100,
               n_proxy_crf, n_complete,
               n_rev_crf, n_complete,
-              n_proxy_bin, n_complete))
+              n_proxy_bin, n_complete,
+              n_proxy_top, n_complete))
 }
 
 cat("\n")
 
 # Also report on the full 56 (not restricted to complete cases)
 cat("===================================================================\n")
-cat("  SAME TABLE, UNRESTRICTED (all 56 TP firm-years)\n")
+cat("  SAME TABLE, UNRESTRICTED (all TP firm-years)\n")
 cat("  Revenue/CRF-yr uses only firm-years with revenue (n =",
     sum(!is.na(tp$rev_pctile_crf)), ")\n")
 cat("  Proxy/CRF-yr-size uses only firm-years with size bin (n =",
     sum(!is.na(tp$proxy_pctile_bin)), ")\n")
+cat("  Proxy/top-half uses only firm-years in top-half size bins (n =",
+    sum(!is.na(tp$size_bin) & tp$size_bin %in% top_half_bins), ")\n")
 cat("===================================================================\n\n")
 
-cat(sprintf("%8s %18s %18s %18s\n",
+# Add top-half flag to full tp
+tp <- tp %>%
+  mutate(
+    in_top_half = !is.na(size_bin) & size_bin %in% top_half_bins,
+    proxy_pctile_top_half = ifelse(in_top_half, proxy_pctile_bin, NA_real_)
+  )
+
+cat(sprintf("%8s %15s %15s %15s %15s\n",
             "Top X%",
             "Proxy/CRF-yr",
-            "Revenue/CRF-yr",
-            "Proxy/CRF-yr-size"))
-cat(strrep("-", 66), "\n")
+            "Rev/CRF-yr",
+            "Proxy/size-bin",
+            "Proxy/top-half"))
+cat(strrep("-", 78), "\n")
 
 for (x in cutoffs) {
   threshold <- 1 - x
+  threshold_d <- 1 - min(2 * x, 1)
   n_proxy_crf  <- sum(tp$proxy_pctile_crf >= threshold)
   n_rev_crf    <- sum(tp$rev_pctile_crf >= threshold, na.rm = TRUE)
   n_proxy_bin  <- sum(tp$proxy_pctile_bin >= threshold, na.rm = TRUE)
+  n_proxy_top  <- sum(tp$proxy_pctile_top_half >= threshold_d, na.rm = TRUE)
   denom_rev    <- sum(!is.na(tp$rev_pctile_crf))
   denom_bin    <- sum(!is.na(tp$proxy_pctile_bin))
-  cat(sprintf("%7.0f%% %8d / %-4d %8d / %-4d %8d / %-4d\n",
+  denom_top    <- sum(!is.na(tp$proxy_pctile_top_half))
+  cat(sprintf("%7.0f%% %7d / %-4d %7d / %-4d %7d / %-4d %7d / %-4d\n",
               x * 100,
               n_proxy_crf, nrow(tp),
               n_rev_crf, denom_rev,
-              n_proxy_bin, denom_bin))
+              n_proxy_bin, denom_bin,
+              n_proxy_top, denom_top))
 }
 
 cat("\n")
